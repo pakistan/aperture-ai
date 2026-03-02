@@ -399,11 +399,28 @@ class PermissionEngine:
         scope: str,
         organization_id: str,
     ) -> Optional[PermissionDecision]:
-        """Check if we've learned enough to auto-decide."""
+        """Check if we've learned enough to auto-decide.
+
+        HIGH and CRITICAL risk actions are never auto-approved — they always
+        require explicit human approval regardless of history. This prevents
+        a user approving `rm -rf ./build/` a few times from causing Aperture
+        to auto-approve destructive commands.
+        """
         import aperture.config
 
         settings = aperture.config.settings
         if not settings.permission_learning_enabled:
+            return None
+
+        # Never auto-approve HIGH or CRITICAL risk actions
+        from aperture.permissions.risk import classify_risk
+
+        risk = classify_risk(tool, action, scope)
+        if risk.tier in (RiskTier.HIGH, RiskTier.CRITICAL):
+            logger.debug(
+                "Skipping auto-learn for %s.%s on %s — risk tier is %s",
+                tool, action, scope, risk.tier.value,
+            )
             return None
 
         with Session(get_engine()) as session:

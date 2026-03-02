@@ -123,6 +123,31 @@ class TestPermissionLearning:
         verdict = engine.check("shell", "execute", "test.sh", [])
         assert verdict.decision == "deny"
 
+    def test_high_risk_actions_never_auto_approved(self):
+        """HIGH/CRITICAL risk actions must always require human approval, even with strong history."""
+        engine = PermissionEngine()
+        import aperture.config
+        aperture.config.settings.permission_learning_min_decisions = 3
+        aperture.config.settings.auto_approve_threshold = 0.80
+
+        # Record 20 human approvals of a destructive shell command
+        for i in range(20):
+            engine.record_human_decision(
+                tool="shell",
+                action="execute",
+                scope="rm -rf ./build/",
+                decision=PermissionDecision.ALLOW,
+                decided_by=f"user-{i % 3}",
+                organization_id="default",
+            )
+
+        # Despite 20 approvals at 100% rate, this should NOT be auto-approved
+        # because shell.execute on "rm -rf ./build/" is HIGH risk
+        verdict = engine.check("shell", "execute", "rm -rf ./build/", [])
+        assert verdict.decision == "deny", (
+            f"HIGH risk action was auto-approved — expected deny, got {verdict.decision}"
+        )
+
     def test_learner_detects_patterns(self):
         engine = PermissionEngine()
         import aperture.config
