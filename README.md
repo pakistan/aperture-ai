@@ -1,67 +1,74 @@
 # Aperture
 
-The permission layer for AI agents. Controls what passes through.
+**The permission layer for AI agents.**
 
-Aperture sits between your organization and any AI agent runtime (Claude Code, OpenAI Agents SDK, Google ADK, LangChain, etc.). It doesn't run agents or make LLM calls — it decides what agents are allowed to do.
+AI agents can run shell commands, read your files, call APIs, and modify databases. Today, you're the only thing standing between an agent and `rm -rf /`. Every action gets a yes/no popup. You either approve everything blindly or slow your workflow to a crawl.
 
-## Features
+Aperture fixes this. It sits between your agent runtime and the outside world, learns your permission preferences over time, and auto-approves the safe stuff — so you only get asked about things that actually matter.
 
-- **Permission Engine** — RBAC + ReBAC + auto-learning from human decisions
-- **Artifact Store** — SHA-256 verified, immutable storage for every agent output
-- **Audit Trail** — Append-only compliance log of every action
-- **MCP Integration** — 9 tools for Claude Code via Model Context Protocol
-- **REST API** — FastAPI server for any agent runtime
+## How it works
 
-## Install
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                      Your Agent Runtime                          │
+│           (Claude Code, OpenAI Agents, LangChain, etc.)          │
+└──────────────────────┬───────────────────────────────────────────┘
+                       │
+                       │  "Can this agent run `npm test`?"
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                         APERTURE                                 │
+│                                                                  │
+│   ┌─────────────┐  ┌──────────────┐  ┌───────────────────────┐  │
+│   │ Permission   │  │ Risk Scoring │  │ Learning Engine       │  │
+│   │ Engine       │  │              │  │                       │  │
+│   │              │  │ tool danger  │  │ You approved npm test │  │
+│   │ RBAC rules   │─▶│ × action     │  │ 15 times in a row.   │  │
+│   │ Task grants  │  │   severity   │  │ Auto-approving now.   │  │
+│   │ Learned      │  │ × scope      │  │                       │  │
+│   │   patterns   │  │   breadth    │  │ You denied rm -rf /   │  │
+│   │              │  │              │  │ every time.            │  │
+│   └──────┬───┬──┘  └──────────────┘  │ Auto-denying now.     │  │
+│          │   │                        └───────────────────────┘  │
+│          │   │     ┌──────────────┐  ┌───────────────────────┐  │
+│          │   │     │ Audit Trail  │  │ Artifact Store        │  │
+│          │   └────▶│ Every        │  │ SHA-256 verified      │  │
+│          │         │ decision     │  │ immutable storage     │  │
+│          │         │ logged       │  │ for agent outputs     │  │
+│          │         └──────────────┘  └───────────────────────┘  │
+└──────────┼───────────────────────────────────────────────────────┘
+           │
+           ▼
+     ┌─────────────┐
+     │  ALLOW       │  ← auto-approved (learned pattern)
+     │  DENY        │  ← auto-denied (learned pattern)
+     │  ASK         │  ← no pattern yet, ask the human
+     └─────────────┘
+```
+
+**No LLM calls.** Every decision is deterministic — glob matching, statistics, and pattern lookup. Aperture never phones home, never calls an API, and adds zero latency from model inference.
+
+## What you experience
+
+**Day 1** — Aperture asks you about everything, just like today. But it's recording your decisions.
+
+**Day 3** — You've approved `npm test`, `git status`, and `cat README.md` a dozen times each. Aperture stops asking about those. You still get prompted for `rm`, `curl`, and anything touching production.
+
+**Day 7** — The only popups you see are for genuinely new or risky actions. Everything routine is auto-approved. Everything dangerous is auto-denied. Your agent moves faster and you have a full audit trail of every decision.
+
+## Quick start
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev]"       # Install
+aperture init-db              # Initialize the database
+aperture serve                # Start the API server on localhost:8100
 ```
 
-Requires Python 3.12+.
+That's it. Aperture is running. Now connect your agent runtime.
 
-## Quick Start
+## Connect your runtime
 
-### As a CLI
-
-```bash
-# Initialize the database
-aperture init-db
-
-# Start the API server (default: localhost:8100)
-aperture serve
-
-# Start the MCP server (stdio, for Claude Code)
-aperture mcp-serve
-```
-
-### As a library
-
-```python
-from aperture.permissions import PermissionEngine
-from aperture.models import PermissionDecision
-
-engine = PermissionEngine()
-
-# Check if an action is allowed
-verdict = engine.check("filesystem", "read", "src/main.py", rules=[])
-
-# Record a human decision (feeds the learning engine)
-engine.record_human_decision(
-    tool="shell",
-    action="execute",
-    scope="npm test",
-    decision=PermissionDecision.ALLOW,
-    decided_by="user-1",
-    organization_id="my-org",
-)
-
-# After enough decisions, the engine auto-approves similar actions
-verdict = engine.check("shell", "execute", "npm test", rules=[])
-print(verdict.decision)  # PermissionDecision.ALLOW (auto-learned)
-```
-
-### With Claude Code (MCP)
+### Claude Code (MCP)
 
 Add to your `.mcp.json`:
 
@@ -77,53 +84,87 @@ Add to your `.mcp.json`:
 }
 ```
 
-This exposes 9 tools to Claude Code:
-- `check_permission` — Enriched permission check with risk assessment
-- `approve_action` / `deny_action` — Record human decisions
-- `explain_action` — Human-readable action explanation
-- `get_permission_patterns` — View learned patterns
-- `store_artifact` / `verify_artifact` — SHA-256 verified storage
-- `get_cost_summary` — Token and cost breakdown
-- `get_audit_trail` — Compliance audit trail
+This gives Claude Code 9 tools: `check_permission`, `approve_action`, `deny_action`, `explain_action`, `get_permission_patterns`, `store_artifact`, `verify_artifact`, `get_cost_summary`, and `get_audit_trail`.
 
-## API
+### REST API
 
-Start the server with `aperture serve`, then:
+Any agent runtime can use the HTTP API:
 
 ```bash
 # Check a permission
 curl -X POST localhost:8100/permissions/check \
   -H "Content-Type: application/json" \
-  -d '{"tool": "shell", "action": "execute", "scope": "rm -rf ./build/"}'
+  -d '{"tool": "shell", "action": "execute", "scope": "npm test"}'
 
-# Record a human decision
+# Record a human decision (feeds the learning engine)
 curl -X POST localhost:8100/permissions/record \
   -H "Content-Type: application/json" \
   -d '{
-    "tool": "shell",
-    "action": "execute",
-    "scope": "npm test",
-    "decision": "allow",
-    "decided_by": "user-1"
+    "tool": "shell", "action": "execute", "scope": "npm test",
+    "decision": "allow", "decided_by": "user-1"
   }'
-
-# Store an artifact
-curl -X POST localhost:8100/artifacts/store \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task_id": "task-1",
-    "artifact_type": "code",
-    "content": "print(\"hello\")",
-    "metadata": {"language": "python"}
-  }'
-
-# Query audit trail
-curl localhost:8100/audit/events?limit=10
 ```
 
-## Configuration
+### Python library
 
-All settings via environment variables:
+```python
+from aperture.permissions import PermissionEngine
+from aperture.models import PermissionDecision
+
+engine = PermissionEngine()
+
+# Check if an action is allowed
+verdict = engine.check("shell", "execute", "npm test", rules=[])
+
+# Record a human decision
+engine.record_human_decision(
+    tool="shell", action="execute", scope="npm test",
+    decision=PermissionDecision.ALLOW, decided_by="user-1",
+    organization_id="my-org",
+)
+
+# After enough decisions, the engine auto-approves
+verdict = engine.check("shell", "execute", "npm test", rules=[])
+print(verdict.decision)  # PermissionDecision.ALLOW
+```
+
+## Features
+
+| Feature | What it does |
+|---------|-------------|
+| **Permission Engine** | RBAC rules + task-scoped grants (ReBAC) + auto-learning from human decisions |
+| **Risk Scoring** | OWASP-inspired `tool danger × action severity × scope breadth` — flags `rm -rf /` as CRITICAL, `cat README.md` as LOW |
+| **Learning Engine** | Tracks your approval/denial history per (tool, action, scope). After 10+ consistent decisions, auto-decides |
+| **Crowd Wisdom** | Aggregates decisions across your org — surfaces what your team usually approves or denies |
+| **Artifact Store** | SHA-256 verified, immutable storage for every agent output |
+| **Audit Trail** | Append-only compliance log of every permission decision |
+| **MCP Server** | 9 tools for Claude Code via Model Context Protocol |
+| **REST API** | FastAPI server for any agent runtime |
+| **CLI** | `aperture serve`, `aperture init-db`, `aperture configure` |
+
+## How decisions are made
+
+Aperture resolves permissions in this order, stopping at the first match:
+
+```
+1. Session memory     →  Already decided this session? Reuse it.
+2. Task grants (ReBAC) →  Scoped permission for this specific task?
+3. Learned patterns   →  10+ consistent human decisions? Auto-decide.
+4. Static RBAC rules  →  Glob-matched rules (most specific wins).
+5. Default deny       →  No match? Deny.
+```
+
+When enrichment is enabled, each verdict also includes:
+- **Risk assessment** — tier (LOW/MEDIUM/HIGH/CRITICAL), score, factors, reversibility
+- **Human-readable explanation** — what the action does, in plain English
+- **Crowd signal** — what your org has historically decided for this pattern
+- **Similar patterns** — related decisions that might inform this one
+- **Recommendation** — auto-approve, auto-deny, suggest a rule, or keep asking
+
+<details>
+<summary><strong>Configuration</strong></summary>
+
+All settings via environment variables (prefix `APERTURE_`):
 
 | Variable | Default | Description |
 |---|---|---|
@@ -132,34 +173,27 @@ All settings via environment variables:
 | `APERTURE_POSTGRES_URL` | — | Postgres connection URL |
 | `APERTURE_PERMISSION_LEARNING_ENABLED` | `true` | Auto-learn from human decisions |
 | `APERTURE_PERMISSION_LEARNING_MIN_DECISIONS` | `10` | Min decisions before auto-deciding |
-| `APERTURE_AUTO_APPROVE_THRESHOLD` | `0.95` | Allow rate to auto-approve |
-| `APERTURE_AUTO_DENY_THRESHOLD` | `0.05` | Allow rate to auto-deny |
+| `APERTURE_AUTO_APPROVE_THRESHOLD` | `0.95` | Approval rate to trigger auto-approve |
+| `APERTURE_AUTO_DENY_THRESHOLD` | `0.05` | Approval rate to trigger auto-deny |
+| `APERTURE_INTELLIGENCE_ENABLED` | `false` | Cross-org intelligence (opt-in) |
 | `APERTURE_API_HOST` | `0.0.0.0` | API bind host |
 | `APERTURE_API_PORT` | `8100` | API bind port |
 
-## How It Works
+Or run `aperture configure` for an interactive setup wizard.
 
-1. An agent runtime asks Aperture: "Can this agent run `rm -rf ./build/`?"
-2. Aperture checks RBAC rules, task-scoped grants (ReBAC), and learned patterns
-3. If no rule matches, it returns `ask` — the human decides
-4. The human's decision is recorded and used to learn patterns
-5. After enough consistent decisions (default: 10), Aperture auto-decides
-6. Every decision is logged to the immutable audit trail
+</details>
 
-No LLM calls. Every decision is deterministic — glob matching, database queries, statistics.
-
-## Development
+<details>
+<summary><strong>Development</strong></summary>
 
 ```bash
-# Install dev dependencies
 pip install -e ".[dev]"
-
-# Run tests
 python -m pytest tests/ -v
-
-# Run a specific test file
-python -m pytest tests/test_permissions.py -v
 ```
+
+Requires Python 3.12+.
+
+</details>
 
 ## License
 
