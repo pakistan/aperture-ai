@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "aperture": {
+      "command": "aperture",
+      "args": ["mcp-serve"],
+      "env": {
+        "APERTURE_DB_PATH": "./aperture.db",
+        "APERTURE_PERMISSION_LEARNING_MIN_DECISIONS": "3",
+        "APERTURE_AUTO_APPROVE_THRESHOLD": "0.80",
+        "APERTURE_AUTO_DENY_THRESHOLD": "0.05"
+      }
+    }
+  }
+}

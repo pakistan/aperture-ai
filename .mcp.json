@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "aperture": {
+      "type": "stdio",
+      "command": "aperture",
+      "args": ["mcp-serve"]
+    }
+  }
+}
