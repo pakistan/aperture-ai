@@ -77,6 +77,22 @@ This is what it looks like in practice:
 | `get_cost_summary` | Get token and cost breakdown |
 | `get_audit_trail` | Query the compliance audit trail |
 
+## Aperture vs Claude Code's built-in permissions
+
+Claude Code has its own permission system — the "Allow once / Allow for session / Always allow / Deny" popup. That's separate from Aperture. Here's how they relate:
+
+| | Claude Code built-in | Aperture |
+|---|---|---|
+| **What it controls** | Whether Claude can call a tool at all | Whether the *action* (read this file, run this command) is allowed |
+| **Persistence** | Per-session or permanent per-machine | Per-database, shared across sessions, learns over time |
+| **Learning** | No — same prompts every new session | Yes — auto-approves after enough consistent human decisions |
+| **Audit trail** | No | Yes — every decision logged |
+| **Risk scoring** | No | Yes — LOW/MEDIUM/HIGH/CRITICAL per action |
+
+In practice, you'll likely set Claude Code's built-in permissions to "Always allow" for Aperture's MCP tools (since Aperture itself is the permission layer). Then all permission decisions flow through Aperture, which learns and persists them.
+
+**Important:** Aperture only checks permissions for tool calls that access external resources (files, shell, APIs). It does NOT interfere with Claude asking you questions, presenting options, or having a normal conversation. Those happen without involving Aperture at all.
+
 ## How the learning loop works
 
 ```

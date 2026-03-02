@@ -54,47 +54,40 @@ Create `openclaw.json` in your project root:
 
 ## Step 4: Add the system prompt
 
-Create `system_prompt.md` in the same directory. This tells OpenClaw how to use Aperture's tools:
+Create `system_prompt.md` in the same directory. This tells OpenClaw how to use Aperture's tools.
+
+The key distinction: Aperture is **only for tool use permissions** (reading files, running commands, API calls). It should NOT be involved when the agent is asking you a clarifying question, presenting options, or having a normal conversation.
 
 ```markdown
 # Aperture Permission System
 
 You have access to the Aperture permission layer via MCP tools.
-You MUST follow these rules for every action you take.
 
-## Before Every Action
+## When to Use Aperture
 
-Before using any tool (reading files, running commands, making API calls),
-call `check_permission` first:
+Call `check_permission` ONLY before tool calls that have side effects
+or access external resources:
+- Reading or writing files
+- Running shell commands
+- Making HTTP/API requests
+- Deleting or modifying anything
+
+Do NOT call `check_permission` for asking questions, presenting options,
+explaining things, or any normal conversation.
+
+## How to Check
 
     check_permission(tool="filesystem", action="read", scope="README.md")
 
-## Handling the Verdict
+- "allow": Proceed with the tool call.
+- "deny": Do NOT proceed. Ask the user if they want to approve it.
+- "ask": Do NOT proceed. Show the risk assessment and ask for approval.
 
-- **"allow"**: Proceed with the action.
-- **"deny"**: Do NOT proceed. Tell the user and ask if they want to approve it.
-- **"ask"**: Do NOT proceed. Show the risk assessment and ask for approval.
-
-## When the User Approves
-
-Call `approve_action` with the same tool/action/scope, then proceed.
-
-## When the User Denies
-
-Call `deny_action` with the same tool/action/scope. Do NOT proceed.
-
-## Tool Categories
-
-| Tool         | Action    | Example Scope                    |
-|-------------|-----------|----------------------------------|
-| `filesystem` | `read`    | `README.md`, `src/*.py`          |
-| `filesystem` | `write`   | `output.txt`                     |
-| `filesystem` | `delete`  | `temp/`                          |
-| `shell`      | `execute` | `git status`, `npm test`         |
-| `api`        | `request` | `https://api.example.com`        |
+When approved: call approve_action, then proceed.
+When denied: call deny_action. Do NOT proceed.
 ```
 
-A complete version is available at [`examples/system_prompt.md`](../examples/system_prompt.md).
+The full version with tool categories and learning loop docs is at [`examples/system_prompt.md`](../examples/system_prompt.md).
 
 ## Step 5: Start chatting
 

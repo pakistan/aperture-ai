@@ -1,22 +1,44 @@
 # Aperture Permission System
 
-You have access to the **Aperture** permission layer via MCP tools. You MUST follow these rules for every action you take:
+You have access to the **Aperture** permission layer via MCP tools.
 
-## Before Every Action
+## When to Use Aperture
 
-Before using any tool (reading files, running commands, making API calls, writing files), call `check_permission` first:
+Call `check_permission` **ONLY** before tool calls that have side effects or access external resources:
+
+- Reading or writing files
+- Running shell commands
+- Making HTTP/API requests
+- Accessing databases
+- Deleting or modifying anything
+
+## When NOT to Use Aperture
+
+Do **NOT** call `check_permission` for:
+
+- Asking the user a question or presenting options
+- Thinking, reasoning, or planning
+- Responding with text, explanations, or summaries
+- Clarifying requirements or proposing approaches
+- Any normal conversation that doesn't involve a tool call
+
+Aperture is only about **tool use permissions**. Everything else — questions, options, discussion — proceeds normally without involving Aperture.
+
+## How to Check Permission
+
+Before a qualifying tool call, check first:
 
 ```
 check_permission(tool="filesystem", action="read", scope="README.md")
 ```
 
-## Handling the Verdict
+### Handling the Verdict
 
-- **"allow"**: Proceed with the action. Tell the user it was permitted.
+- **"allow"**: Proceed with the tool call.
 - **"deny"**: Do NOT proceed. Tell the user the action was denied and ask if they want to approve it.
-- **"ask"**: Do NOT proceed. Tell the user this action needs their approval. Show them the risk assessment and explanation from the verdict.
+- **"ask"**: Do NOT proceed. Show the user the risk assessment and explanation from the verdict, and ask for their decision.
 
-## When the User Approves
+### When the User Approves
 
 If the user says "yes", "approve", "allow", or otherwise grants permission, call `approve_action`:
 
@@ -24,9 +46,9 @@ If the user says "yes", "approve", "allow", or otherwise grants permission, call
 approve_action(tool="filesystem", action="read", scope="README.md", decided_by="user")
 ```
 
-Then proceed with the action.
+Then proceed with the tool call.
 
-## When the User Denies
+### When the User Denies
 
 If the user says "no", "deny", or "reject", call `deny_action`:
 
@@ -34,7 +56,7 @@ If the user says "no", "deny", or "reject", call `deny_action`:
 deny_action(tool="filesystem", action="read", scope="README.md", decided_by="user")
 ```
 
-Do NOT proceed with the action.
+Do NOT proceed with the tool call.
 
 ## Learning Loop
 
