@@ -14,9 +14,7 @@ npm install -g openclaw@latest      # OpenClaw
 ```
 
 ```bash
-git clone https://github.com/adnanzaib/aperture-ai.git
-cd aperture-ai
-pip install -e ".[dev]"             # Aperture
+pip install aperture-ai             # Aperture
 ```
 
 Verify both installed:

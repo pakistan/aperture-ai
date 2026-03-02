@@ -10,9 +10,7 @@ This guide walks you through adding Aperture as Claude Code's permission layer v
 ## Step 1: Install Aperture
 
 ```bash
-git clone https://github.com/adnanzaib/aperture-ai.git
-cd aperture-ai
-pip install -e ".[dev]"
+pip install aperture-ai
 ```
 
 Verify it installed:

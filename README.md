@@ -61,7 +61,7 @@ Aperture fixes this. It sits between your agent runtime and the outside world, l
 ## Quick start
 
 ```bash
-pip install -e ".[dev]"       # Install
+pip install aperture-ai       # Install from PyPI
 aperture init-db              # Initialize the database
 aperture serve                # Start the API server on localhost:8100
 ```
