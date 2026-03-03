@@ -49,20 +49,23 @@ aperture/
 │   │   ├── intelligence.py  # GlobalPermissionStat (cross-org DP stats)
 │   │   └── verdict.py       # PermissionVerdict, RiskAssessment, OrgSignal, etc.
 │   ├── permissions/         # Permission engine + learning + intelligence
-│   │   ├── engine.py        # RBAC + ReBAC + auto-learning + verdict enrichment
+│   │   ├── engine.py        # RBAC + ReBAC + auto-learning + verdict enrichment + revocation
 │   │   ├── learning.py      # Pattern detection from decision history
 │   │   ├── intelligence.py  # Cross-org DP intelligence engine
-│   │   ├── risk.py          # OWASP-based risk classification
+│   │   ├── risk.py          # OWASP-based risk classification + deep shell analysis
 │   │   ├── crowd.py         # Org-level crowd signals
 │   │   ├── similarity.py    # Taxonomy-based pattern similarity
 │   │   ├── explainer.py     # Human-readable action explanations
-│   │   └── resource.py      # Scope → resource normalization
+│   │   ├── resource.py      # Scope → resource normalization
+│   │   ├── challenge.py     # HMAC challenge-response for human verification
+│   │   ├── presets.py       # Bootstrap presets (developer, readonly, minimal)
+│   │   └── scope_normalize.py # Scope normalization for learning
 │   ├── stores/              # Persistence layer
 │   │   ├── artifact_store.py
 │   │   └── audit_store.py
 │   ├── config.py            # Settings via APERTURE_* env vars + runtime updates
-│   ├── cli.py               # CLI entry point (serve | mcp-serve | init-db | configure)
-│   └── mcp_server.py        # MCP server (11 tools, stdio transport)
+│   ├── cli.py               # CLI entry point (serve | mcp-serve | init-db | configure | bootstrap | revoke)
+│   └── mcp_server.py        # MCP server (14 tools, stdio transport)
 ├── examples/
 │   ├── openclaw_demo.py     # Dual-mode demo (real OpenClaw or simulated)
 │   ├── openclaw.json        # OpenClaw config wiring Aperture as MCP server
@@ -106,16 +109,40 @@ aperture/
 
 ## MCP Tools
 
-11 tools exposed via MCP (stdio transport):
-- `check_permission` — Enriched permission check with risk, explanation, crowd signal
-- `approve_action` / `deny_action` — Record human decisions (feeds learning + intelligence)
+14 tools exposed via MCP (stdio transport):
+
+### Permission tools
+- `check_permission` — Enriched permission check with risk, explanation, crowd signal, HMAC challenge
+- `approve_action` / `deny_action` — Record human decisions (requires valid HMAC challenge token)
 - `explain_action` — Human-readable explanation with risk assessment
 - `get_permission_patterns` — View learned auto-approve/deny patterns
+
+### Compliance tools
+- `report_tool_execution` — Report that an agent executed a tool (for compliance tracking)
+- `get_compliance_report` — Compare executions vs permission checks to find compliance gaps
+
+### Revocation tools
+- `revoke_permission_pattern` — Revoke auto-approval for a (tool, action, scope) pattern
+- `list_auto_approved_patterns` — List all patterns currently being auto-approved
+
+### Artifact tools
 - `store_artifact` / `verify_artifact` — SHA-256 verified artifact storage
 - `get_cost_summary` — Token and cost breakdown
+
+### Audit & config tools
 - `get_audit_trail` — Compliance audit trail
 - `get_config` — Read tunable configuration settings
-- `update_config` — Update configuration at runtime (persists to `.aperture.env`)
+
+## Security Architecture
+
+1. **HMAC challenge-response** — Every non-ALLOW verdict includes a cryptographic challenge token (HMAC-SHA256 signed with a server-side secret in `challenge.py`). `approve_action`/`deny_action` require a valid challenge, preventing agents from self-approving without human involvement.
+2. **No config mutation via MCP** — The `update_config` MCP tool was removed. Agents can read config (`get_config`) but cannot lower thresholds. Config changes require the CLI wizard or HTTP API.
+3. **Deep risk analysis** — `risk.py` unpacks shell wrappers (`bash -c`, `sudo`), pipe-to-exec (`curl | sh`), scripting oneliners (`python -c "os.system(...)"`), and `find -exec`. Inner command risk is what counts. HIGH/CRITICAL actions are never auto-approved.
+4. **Compliance tracking** — `report_tool_execution` records tool executions. `get_compliance_report` compares executions against permission checks to find unchecked tool usage.
+5. **Bootstrap presets** — `presets.py` provides `developer` (75 patterns), `readonly` (48), `minimal` (0) to reduce first-session approval fatigue.
+6. **Content awareness** — `content_hash` parameter in `check_permission` differentiates writes by content. Session cache key is a 5-tuple: `(tool, action, scope, session_id, content_hash)`.
+7. **Scope normalization** — `scope_normalize.py` groups command variants (e.g., `git log --oneline -5` → `git log*`) for faster learning.
+8. **Revocation** — `engine.revoke_pattern()` soft-deletes decisions via `revoked_at` timestamp. Excluded from learning, crowd signals, and pattern detection. Preserved for audit.
 
 ## Architecture Rules
 
@@ -153,7 +180,7 @@ Run `aperture configure` for an interactive setup wizard, or use `PATCH /config`
 | `APERTURE_API_HOST` | `0.0.0.0` | No | API server bind host |
 | `APERTURE_API_PORT` | `8100` | No | API server port |
 
-"Tunable" settings can be updated at runtime via `PATCH /config`, the CLI wizard, or MCP `update_config` tool. Infrastructure settings (No) require restart.
+"Tunable" settings can be updated at runtime via `PATCH /config` or the CLI wizard (`aperture configure`). Infrastructure settings (No) require restart.
 
 ## OpenClaw Integration
 

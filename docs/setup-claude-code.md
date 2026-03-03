@@ -53,7 +53,7 @@ That's it. Restart Claude Code (or open a new session) and Aperture is active.
 
 When you start your first Claude Code session with Aperture:
 
-1. **Claude sees the 9 Aperture tools** — it can call `check_permission`, `approve_action`, `deny_action`, `explain_action`, `get_permission_patterns`, `store_artifact`, `verify_artifact`, `get_cost_summary`, and `get_audit_trail`.
+1. **Claude sees the 14 Aperture tools** — it can call `check_permission`, `approve_action`, `deny_action`, `explain_action`, `get_permission_patterns`, `store_artifact`, `verify_artifact`, `get_cost_summary`, `get_audit_trail`, `get_config`, `report_tool_execution`, `get_compliance_report`, `revoke_permission_pattern`, and `list_auto_approved_patterns`.
 
 2. **Everything starts as denied** — Aperture has no history yet, so the first time Claude tries to read a file or run a command, it will be denied. Claude will ask you to approve it.
 
@@ -67,15 +67,20 @@ This is what it looks like in practice:
 
 | Tool | What it does |
 |------|-------------|
-| `check_permission` | Check if an action is allowed (with risk assessment) |
-| `approve_action` | Record a human approval |
-| `deny_action` | Record a human denial |
+| `check_permission` | Check if an action is allowed (with risk assessment and HMAC challenge) |
+| `approve_action` | Record a human approval (requires valid challenge token) |
+| `deny_action` | Record a human denial (requires valid challenge token) |
 | `explain_action` | Get a human-readable explanation of what an action does |
 | `get_permission_patterns` | View what Aperture has learned from your decisions |
+| `report_tool_execution` | Report that a tool was executed (for compliance tracking) |
+| `get_compliance_report` | See which tool executions had prior permission checks |
+| `revoke_permission_pattern` | Undo a learned auto-approval pattern |
+| `list_auto_approved_patterns` | See all patterns currently being auto-approved |
 | `store_artifact` | Store an agent output with SHA-256 verification |
 | `verify_artifact` | Verify an artifact's integrity |
 | `get_cost_summary` | Get token and cost breakdown |
 | `get_audit_trail` | Query the compliance audit trail |
+| `get_config` | View current Aperture settings |
 
 ## Aperture vs Claude Code's built-in permissions
 
@@ -127,6 +132,28 @@ In practice, you'll likely set Claude Code's built-in permissions to "Always all
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+## Skip the first-session approval flood
+
+By default, Aperture asks about everything on first use. You can pre-seed safe patterns using bootstrap presets:
+
+```bash
+aperture bootstrap developer    # 75 patterns: git, file reads, test runners, linters
+aperture bootstrap readonly     # 48 patterns: file reads and safe shell commands only
+aperture bootstrap minimal      # Clean slate (default behavior)
+```
+
+After bootstrapping, common actions like `git status`, `cat README.md`, and `npm test` are auto-approved immediately.
+
+## Revoking learned patterns
+
+If Aperture learned to auto-approve something you no longer want:
+
+```bash
+aperture revoke shell execute "rm*"     # Revoke all rm-related auto-approvals
+```
+
+Or use the MCP tool from within Claude Code — ask Claude to call `revoke_permission_pattern`. The pattern immediately requires fresh human decisions. Revoked records are preserved in the audit trail.
 
 ## Tuning the learning speed
 

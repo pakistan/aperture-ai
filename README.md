@@ -84,6 +84,8 @@ Commands:
   serve        Run HTTP API server
   init-db      Initialize the database
   configure    Interactive setup wizard
+  bootstrap    Seed permission decisions from a preset
+  revoke       Revoke auto-approval for a permission pattern
 ```
 
 ### 2. Initialize
@@ -114,7 +116,7 @@ Add to your `.mcp.json` (project root or `~/.claude/`):
 }
 ```
 
-Start Claude Code. It now has 9 Aperture tools — `check_permission`, `approve_action`, `deny_action`, `explain_action`, `get_permission_patterns`, `store_artifact`, `verify_artifact`, `get_cost_summary`, and `get_audit_trail`.
+Start Claude Code. It now has 14 Aperture tools — `check_permission`, `approve_action`, `deny_action`, `explain_action`, `get_permission_patterns`, `store_artifact`, `verify_artifact`, `get_cost_summary`, `get_audit_trail`, `get_config`, `report_tool_execution`, `get_compliance_report`, `revoke_permission_pattern`, and `list_auto_approved_patterns`.
 
 **[Full Claude Code guide →](docs/setup-claude-code.md)** — includes learning loop diagram, tuning, and troubleshooting.
 
@@ -230,14 +232,20 @@ export APERTURE_AUTO_APPROVE_THRESHOLD=0.90
 | Feature | What it does |
 |---------|-------------|
 | **Permission Engine** | RBAC rules + task-scoped grants (ReBAC) + auto-learning from human decisions |
-| **Risk Scoring** | OWASP-inspired `tool danger × action severity × scope breadth` — flags `rm -rf /` as CRITICAL, `cat README.md` as LOW |
+| **Risk Scoring** | OWASP-inspired `tool danger × action severity × scope breadth` with deep analysis of shell wrappers, pipe-to-exec, and scripting oneliners |
 | **Learning Engine** | Tracks your approval/denial history per (tool, action, scope). After 10+ consistent decisions, auto-decides |
 | **Crowd Wisdom** | Aggregates decisions across your org — surfaces what your team usually approves or denies |
 | **Artifact Store** | SHA-256 verified, immutable storage for every agent output |
 | **Audit Trail** | Append-only compliance log of every permission decision |
-| **MCP Server** | 9 tools for Claude Code via Model Context Protocol |
+| **Compliance Tracking** | Detects unchecked tool executions — tools that ran without a prior permission check |
+| **HMAC Challenge-Response** | Cryptographic proof that a human saw the verdict before approving — prevents agent self-approval |
+| **Bootstrap Presets** | Pre-seed safe patterns (`developer`, `readonly`, `minimal`) so you're not overwhelmed on day 1 |
+| **Revocation** | Undo learned patterns instantly — `aperture revoke shell execute "rm*"` |
+| **Content Awareness** | Differentiates writes to the same file by content hash — a rewrite of `main.py` is flagged even if a prior write was approved |
+| **Scope Normalization** | Groups `git log`, `git log --oneline`, `git log -5` into `git log*` so approvals accumulate faster |
+| **MCP Server** | 14 tools for Claude Code via Model Context Protocol |
 | **REST API** | FastAPI server for any agent runtime |
-| **CLI** | `aperture serve`, `aperture init-db`, `aperture configure` |
+| **CLI** | `aperture serve`, `aperture init-db`, `aperture configure`, `aperture bootstrap`, `aperture revoke` |
 
 ## How decisions are made
 
@@ -257,6 +265,54 @@ When enrichment is enabled, each verdict also includes:
 - **Crowd signal** — what your org has historically decided for this pattern
 - **Similar patterns** — related decisions that might inform this one
 - **Recommendation** — auto-approve, auto-deny, suggest a rule, or keep asking
+
+## Security hardening
+
+Aperture includes several layers of protection against agent misuse:
+
+### HMAC challenge-response (anti self-approval)
+
+Every `check_permission` verdict includes a cryptographic challenge token (HMAC-signed with a server-side secret). To approve or deny an action, the caller must echo back the challenge, nonce, and timestamp from the original verdict. This proves a human saw the verdict before acting on it. Agents cannot forge these tokens because they don't have the server secret.
+
+### Deep risk analysis
+
+The risk scorer doesn't just look at the top-level command. It unpacks shell wrappers (`bash -c "rm -rf /"` scores as `rm -rf /`, not `bash`), detects pipe-to-exec patterns (`curl | sh`), scripting oneliners (`python -c "os.system(...)"`), and dangerous `find -exec`/`-delete` commands. HIGH and CRITICAL risk actions are **never** auto-approved regardless of history.
+
+### Compliance audit tracking
+
+Two tools detect when agents bypass permission checks:
+
+- `report_tool_execution` — called after an agent runs a tool, creating an execution record
+- `get_compliance_report` — compares executions against prior permission checks, revealing compliance gaps (tools that ran without ever being checked)
+
+### Bootstrap presets
+
+Skip the approval fatigue of the first session:
+
+```bash
+aperture bootstrap developer    # 75 safe patterns (git, file reads, test runners, linters)
+aperture bootstrap readonly     # 48 patterns (reads only)
+aperture bootstrap minimal      # Clean slate
+```
+
+### Revocation
+
+Undo any learned pattern instantly:
+
+```bash
+aperture revoke shell execute "rm*"              # Revoke all rm-related auto-approvals
+aperture revoke filesystem write "*.py" --org=prod  # Org-scoped revocation
+```
+
+Revoked decisions are soft-deleted (preserved for audit) but excluded from learning, crowd signals, and auto-approval. The pattern immediately requires fresh human decisions.
+
+### Content awareness
+
+Pass a `content_hash` (SHA-256 of the content being written) with your permission check. Different content gets separate cache entries, so rewriting `main.py` with new content is flagged even if a prior write to `main.py` was approved. The verdict includes a `content_changed` flag when the same file is being written with different content than before.
+
+### Scope normalization
+
+The learning engine normalizes command scopes so that `git log`, `git log --oneline`, and `git log --oneline -5` all count toward the same `git log*` pattern. This means approvals accumulate faster and the system learns from fewer interactions.
 
 <details>
 <summary><strong>Configuration</strong></summary>
