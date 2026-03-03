@@ -59,7 +59,7 @@ class AuditStore:
                 session.refresh(event)
                 session.expunge(event)
         except Exception:
-            logger.exception("Failed to record audit event: %s", event_type)
+            logger.error("Failed to record audit event: %s", event_type, exc_info=True)
         return event
 
     def list_events(

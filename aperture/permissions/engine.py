@@ -20,6 +20,7 @@ When enrich=True, the engine also computes:
 
 import fnmatch
 import logging
+import threading
 import uuid
 from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
@@ -45,9 +46,10 @@ class PermissionEngine:
     """Deterministic permission checker for AI agent actions."""
 
     def __init__(self, max_cache_size: int = _MAX_SESSION_CACHE_SIZE):
-        # Cache key: (tool, action, scope, session_id, content_hash)
-        self._session_cache: OrderedDict[tuple[str, str, str, str, str], PermissionDecision] = OrderedDict()
+        # Cache key: (organization_id, tool, action, scope, session_id, content_hash)
+        self._session_cache: OrderedDict[tuple[str, str, str, str, str, str], PermissionDecision] = OrderedDict()
         self._max_cache_size = max_cache_size
+        self._cache_lock = threading.Lock()
 
     def check(
         self,
@@ -80,21 +82,23 @@ class PermissionEngine:
         Returns:
             PermissionVerdict with decision and optional enrichment.
         """
-        # 0. Session memory (content_hash is part of the cache key)
-        cache_key = (tool, action, scope, session_id, content_hash)
-        if session_id and cache_key in self._session_cache:
-            decision = self._session_cache[cache_key]
-            verdict = self._build_verdict(
-                decision, "session_memory", tool, action, scope,
-                organization_id=organization_id, enrich=enrich,
-                content_hash=content_hash, session_id=session_id,
-            )
-            self._log(
-                tool, action, scope, decision, "session_memory",
-                task_id=task_id, session_id=session_id,
-                organization_id=organization_id, runtime_id=runtime_id,
-            )
-            return verdict
+        # 0. Session memory (organization_id + content_hash are part of the cache key)
+        cache_key = (organization_id, tool, action, scope, session_id, content_hash)
+        if session_id:
+            with self._cache_lock:
+                cached = self._session_cache.get(cache_key)
+            if cached is not None:
+                verdict = self._build_verdict(
+                    cached, "session_memory", tool, action, scope,
+                    organization_id=organization_id, enrich=enrich,
+                    content_hash=content_hash, session_id=session_id,
+                )
+                self._log(
+                    tool, action, scope, cached, "session_memory",
+                    task_id=task_id, session_id=session_id,
+                    organization_id=organization_id, runtime_id=runtime_id,
+                )
+                return verdict
 
         # 1. Check task-scoped grants (ReBAC)
         if task_id:
@@ -110,6 +114,7 @@ class PermissionEngine:
                 return self._build_verdict(
                     task_decision, "rebac", tool, action, scope,
                     organization_id=organization_id, enrich=enrich,
+                    session_id=session_id,
                 )
 
         # 2. Check learned auto-decisions
@@ -123,6 +128,7 @@ class PermissionEngine:
             return self._build_verdict(
                 learned, "auto_learned", tool, action, scope,
                 organization_id=organization_id, enrich=enrich,
+                session_id=session_id,
             )
 
         # 3. Static permission rules — glob match with specificity
@@ -136,6 +142,7 @@ class PermissionEngine:
         return self._build_verdict(
             decision, "static_rule", tool, action, scope,
             organization_id=organization_id, enrich=enrich,
+            session_id=session_id,
         )
 
     def grant_task_permission(
@@ -208,6 +215,8 @@ class PermissionEngine:
             tool=tool,
             action=action,
             scope=scope,
+            organization_id=organization_id,
+            session_id=session_id,
         ):
             logger.warning(
                 "Rejected human decision without valid challenge: %s.%s on %s by %s",
@@ -219,11 +228,12 @@ class PermissionEngine:
             )
         # Cache in session memory (LRU eviction at max size)
         if session_id:
-            cache_key = (tool, action, scope, session_id, "")
-            self._session_cache[cache_key] = decision
-            self._session_cache.move_to_end(cache_key)
-            while len(self._session_cache) > self._max_cache_size:
-                self._session_cache.popitem(last=False)
+            cache_key = (organization_id, tool, action, scope, session_id, "")
+            with self._cache_lock:
+                self._session_cache[cache_key] = decision
+                self._session_cache.move_to_end(cache_key)
+                while len(self._session_cache) > self._max_cache_size:
+                    self._session_cache.popitem(last=False)
 
         return self._log(
             tool, action, scope, decision, f"human:{decided_by}",
@@ -269,12 +279,13 @@ class PermissionEngine:
             session.commit()
 
         # Clear session cache entries for this pattern
-        to_remove = [
-            k for k in self._session_cache
-            if k[0] == tool and k[1] == action and (fnmatch.fnmatch(k[2], scope) or k[2] == scope)
-        ]
-        for k in to_remove:
-            del self._session_cache[k]
+        with self._cache_lock:
+            to_remove = [
+                k for k in self._session_cache
+                if k[1] == tool and k[2] == action and (fnmatch.fnmatch(k[3], scope) or k[3] == scope)
+            ]
+            for k in to_remove:
+                del self._session_cache[k]
 
         return count
 
@@ -304,22 +315,28 @@ class PermissionEngine:
         # with a different content_hash in the same session
         content_changed = False
         if content_hash and session_id:
-            for cached_key in self._session_cache:
-                if (
-                    cached_key[0] == tool
-                    and cached_key[1] == action
-                    and cached_key[2] == scope
-                    and cached_key[3] == session_id
-                    and cached_key[4]
-                    and cached_key[4] != content_hash
-                ):
-                    content_changed = True
-                    break
+            with self._cache_lock:
+                for cached_key in self._session_cache:
+                    if (
+                        cached_key[0] == organization_id
+                        and cached_key[1] == tool
+                        and cached_key[2] == action
+                        and cached_key[3] == scope
+                        and cached_key[4] == session_id
+                        and cached_key[5]
+                        and cached_key[5] != content_hash
+                    ):
+                        content_changed = True
+                        break
 
         # Generate HMAC challenge for non-ALLOW decisions
         challenge_token = None
         if decision != PermissionDecision.ALLOW:
-            challenge_token = create_challenge(tool, action, scope)
+            challenge_token = create_challenge(
+                tool, action, scope,
+                organization_id=organization_id,
+                session_id=session_id,
+            )
 
         if not enrich:
             verdict = PermissionVerdict(
@@ -609,5 +626,5 @@ class PermissionEngine:
                 session.refresh(log_entry)
                 session.expunge(log_entry)
         except Exception:
-            logger.exception("Failed to log permission decision")
+            logger.error("Failed to log permission decision for %s.%s", tool, action, exc_info=True)
         return log_entry

@@ -5,9 +5,9 @@ from aperture.permissions import PermissionEngine, PermissionLearner
 from aperture.permissions.challenge import create_challenge
 
 
-def _make_challenge(tool: str, action: str, scope: str) -> dict:
+def _make_challenge(tool: str, action: str, scope: str, organization_id: str = "default", session_id: str = "") -> dict:
     """Helper: create valid challenge kwargs for record_human_decision."""
-    token = create_challenge(tool, action, scope)
+    token = create_challenge(tool, action, scope, organization_id=organization_id, session_id=session_id)
     return {
         "challenge": token.token,
         "challenge_nonce": token.nonce,
@@ -241,7 +241,7 @@ class TestVerdictEnrichment:
             decision=PermissionDecision.ALLOW,
             decided_by="user-1",
             session_id="session-abc",
-            **_make_challenge("shell", "execute", "test.sh"),
+            **_make_challenge("shell", "execute", "test.sh", session_id="session-abc"),
         )
 
         # Same check with same session_id → cached

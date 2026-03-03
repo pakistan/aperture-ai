@@ -11,9 +11,9 @@ from sqlmodel import Session, select
 from aperture.db import get_engine
 
 
-def _make_challenge(tool: str, action: str, scope: str) -> dict:
+def _make_challenge(tool: str, action: str, scope: str, organization_id: str = "default", session_id: str = "") -> dict:
     """Helper: create valid challenge kwargs for record_human_decision."""
-    token = create_challenge(tool, action, scope)
+    token = create_challenge(tool, action, scope, organization_id=organization_id, session_id=session_id)
     return {
         "challenge": token.token,
         "challenge_nonce": token.nonce,
@@ -31,7 +31,7 @@ def _seed_decisions(engine, tool, action, scope, count, org_id="revoke-org"):
             decision=PermissionDecision.ALLOW,
             decided_by=f"user-{i}",
             organization_id=org_id,
-            **_make_challenge(tool, action, scope),
+            **_make_challenge(tool, action, scope, organization_id=org_id),
         )
 
 
@@ -94,14 +94,14 @@ class TestRevokePattern:
         """Session cache entries for revoked pattern are removed."""
         engine = PermissionEngine()
         # Add to session cache
-        engine._session_cache[("shell", "execute", "ls*", "sess1", "")] = PermissionDecision.ALLOW
-        engine._session_cache[("shell", "execute", "cat*", "sess1", "")] = PermissionDecision.ALLOW
+        engine._session_cache[("default", "shell", "execute", "ls*", "sess1", "")] = PermissionDecision.ALLOW
+        engine._session_cache[("default", "shell", "execute", "cat*", "sess1", "")] = PermissionDecision.ALLOW
 
         engine.revoke_pattern("shell", "execute", "ls*", "admin")
 
         # ls* should be removed, cat* should remain
-        assert ("shell", "execute", "ls*", "sess1", "") not in engine._session_cache
-        assert ("shell", "execute", "cat*", "sess1", "") in engine._session_cache
+        assert ("default", "shell", "execute", "ls*", "sess1", "") not in engine._session_cache
+        assert ("default", "shell", "execute", "cat*", "sess1", "") in engine._session_cache
 
     def test_revoke_idempotent(self):
         """Revoking same pattern twice does not error."""

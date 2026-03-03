@@ -10,7 +10,7 @@ External runtimes call these endpoints to:
 """
 
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from aperture.models.permission import Permission, PermissionDecision
@@ -102,21 +102,24 @@ def record_decision(req: RecordDecisionRequest):
     Every decision is persisted. Over time, the system learns
     which actions to auto-approve and which to always flag.
     """
-    log = engine.record_human_decision(
-        tool=req.tool,
-        action=req.action,
-        scope=req.scope,
-        decision=req.decision,
-        decided_by=req.decided_by,
-        challenge=req.challenge,
-        challenge_nonce=req.challenge_nonce,
-        challenge_issued_at=req.challenge_issued_at,
-        task_id=req.task_id,
-        session_id=req.session_id,
-        organization_id=req.organization_id,
-        runtime_id=req.runtime_id,
-        reasoning=req.reasoning,
-    )
+    try:
+        log = engine.record_human_decision(
+            tool=req.tool,
+            action=req.action,
+            scope=req.scope,
+            decision=req.decision,
+            decided_by=req.decided_by,
+            challenge=req.challenge,
+            challenge_nonce=req.challenge_nonce,
+            challenge_issued_at=req.challenge_issued_at,
+            task_id=req.task_id,
+            session_id=req.session_id,
+            organization_id=req.organization_id,
+            runtime_id=req.runtime_id,
+            reasoning=req.reasoning,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"recorded": True, "log_id": log.id}
 
 

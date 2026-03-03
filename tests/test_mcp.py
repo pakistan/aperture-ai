@@ -24,9 +24,9 @@ from aperture.mcp_server import (
 )
 
 
-def _get_challenge(tool: str, action: str, scope: str) -> dict:
+def _get_challenge(tool: str, action: str, scope: str, session_id: str = "", organization_id: str = "default") -> dict:
     """Helper: call check_permission and extract challenge fields from the verdict."""
-    result = json.loads(check_permission(tool=tool, action=action, scope=scope))
+    result = json.loads(check_permission(tool=tool, action=action, scope=scope, session_id=session_id, organization_id=organization_id))
     return {
         "challenge": result.get("challenge", ""),
         "challenge_nonce": result.get("challenge_nonce", ""),
@@ -141,8 +141,8 @@ class TestCheckPermission:
 
     def test_check_permission_with_session_id(self):
         """Session memory: approve once, then check with same session reuses decision."""
-        # First get a challenge
-        ch = _get_challenge("shell", "execute", "test.sh")
+        # First get a challenge (with matching session_id for HMAC binding)
+        ch = _get_challenge("shell", "execute", "test.sh", session_id="session-xyz")
 
         # Record a human approval with session
         approve_action(
@@ -245,7 +245,7 @@ class TestApproveAction:
 
     def test_approve_with_organization_id(self):
         """Custom organization_id is accepted."""
-        ch = _get_challenge("filesystem", "read", "docs/*")
+        ch = _get_challenge("filesystem", "read", "docs/*", organization_id="acme-corp")
         result = json.loads(approve_action(
             tool="filesystem",
             action="read",
@@ -290,7 +290,7 @@ class TestDenyAction:
 
     def test_deny_with_session_id(self):
         """Denial with session_id caches the denial for the session."""
-        ch = _get_challenge("shell", "execute", "dangerous.sh")
+        ch = _get_challenge("shell", "execute", "dangerous.sh", session_id="session-block")
         deny_action(
             tool="shell",
             action="execute",
@@ -413,7 +413,7 @@ class TestGetPermissionPatterns:
         from aperture.permissions.challenge import create_challenge
 
         for i in range(10):
-            ch = create_challenge("filesystem", "read", "docs/*")
+            ch = create_challenge("filesystem", "read", "docs/*", organization_id="default")
             _engine.record_human_decision(
                 tool="filesystem",
                 action="read",
@@ -751,7 +751,7 @@ class TestEndToEndWorkflow:
 
     def test_deny_persists_in_session(self):
         """Denied actions stay denied for the session."""
-        ch = _get_challenge("database", "drop", "production.users")
+        ch = _get_challenge("database", "drop", "production.users", session_id="session-safe")
         deny_action(
             tool="database",
             action="drop",

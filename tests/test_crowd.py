@@ -9,9 +9,9 @@ from aperture.permissions import (
 from aperture.permissions.challenge import create_challenge
 
 
-def _make_challenge(tool: str, action: str, scope: str) -> dict:
+def _make_challenge(tool: str, action: str, scope: str, organization_id: str = "default", session_id: str = "") -> dict:
     """Helper: create valid challenge kwargs for record_human_decision."""
-    token = create_challenge(tool, action, scope)
+    token = create_challenge(tool, action, scope, organization_id=organization_id, session_id=session_id)
     return {
         "challenge": token.token,
         "challenge_nonce": token.nonce,
@@ -36,7 +36,7 @@ class TestOrgSignal:
                 decision=PermissionDecision.ALLOW,
                 decided_by=f"user-{i}",
                 organization_id="crowd-test-org",
-                **_make_challenge("filesystem", "read", "docs/*"),
+                **_make_challenge("filesystem", "read", "docs/*", organization_id="crowd-test-org"),
             )
 
         signal = get_org_signal("filesystem", "read", "docs/*", organization_id="crowd-test-org")
@@ -54,7 +54,7 @@ class TestOrgSignal:
                 decision=PermissionDecision.ALLOW,
                 decided_by=f"user-{i}",
                 organization_id="crowd-mix-org",
-                **_make_challenge("api", "post", "users/*"),
+                **_make_challenge("api", "post", "users/*", organization_id="crowd-mix-org"),
             )
         for i in range(2):
             engine.record_human_decision(
@@ -62,7 +62,7 @@ class TestOrgSignal:
                 decision=PermissionDecision.DENY,
                 decided_by=f"user-{i}",
                 organization_id="crowd-mix-org",
-                **_make_challenge("api", "post", "users/*"),
+                **_make_challenge("api", "post", "users/*", organization_id="crowd-mix-org"),
             )
 
         signal = get_org_signal("api", "post", "users/*", organization_id="crowd-mix-org")
@@ -85,7 +85,7 @@ class TestTrend:
                 decision=PermissionDecision.ALLOW,
                 decided_by=f"user-{i}",
                 organization_id="trend-org",
-                **_make_challenge("shell", "execute", "trend-test-cmd"),
+                **_make_challenge("shell", "execute", "trend-test-cmd", organization_id="trend-org"),
             )
         signal = get_org_signal("shell", "execute", "trend-test-cmd", organization_id="trend-org")
         # With only 2 decisions, trend should be insufficient_data or new

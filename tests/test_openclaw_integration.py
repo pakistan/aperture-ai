@@ -19,10 +19,11 @@ import aperture.config
 from aperture.api import create_app
 
 
-def _api_challenge(client, tool: str, action: str, scope: str) -> dict:
+def _api_challenge(client, tool: str, action: str, scope: str, organization_id: str = "default") -> dict:
     """Get challenge from the HTTP check endpoint."""
     resp = client.post("/permissions/check", json={
         "tool": tool, "action": action, "scope": scope, "permissions": [],
+        "organization_id": organization_id,
     })
     data = resp.json()
     return {
@@ -130,7 +131,7 @@ class TestLearningLoop:
 
         # Record 5 approvals (meets min_decisions=5)
         for i in range(5):
-            ch = _api_challenge(client, "shell", "execute", "git status")
+            ch = _api_challenge(client, "shell", "execute", "git status", organization_id="test-org")
             resp = client.post("/permissions/record", json={
                 "tool": "shell",
                 "action": "execute",
@@ -163,7 +164,7 @@ class TestLearningLoop:
 
         # Record 5 denials
         for i in range(5):
-            ch = _api_challenge(client, "shell", "execute", "rm -rf /")
+            ch = _api_challenge(client, "shell", "execute", "rm -rf /", organization_id="deny-org")
             resp = client.post("/permissions/record", json={
                 "tool": "shell",
                 "action": "execute",
@@ -204,7 +205,7 @@ class TestLearningLoop:
 
         # Record 3 approvals (meets new min_decisions=3)
         for i in range(3):
-            ch = _api_challenge(client, "filesystem", "read", "src/*.py")
+            ch = _api_challenge(client, "filesystem", "read", "src/*.py", organization_id="config-test-org")
             client.post("/permissions/record", json={
                 "tool": "filesystem",
                 "action": "read",

@@ -410,7 +410,7 @@ class TestFindSimilarPatternsIntegrationWithEngine:
         # Record several human decisions for similar scopes
         for scope in ["src/utils.py", "src/helpers.py", "src/constants.py"]:
             for user in ["user-1", "user-2"]:
-                ch = create_challenge("filesystem", "read", scope)
+                ch = create_challenge("filesystem", "read", scope, organization_id="default")
                 engine.record_human_decision(
                     tool="filesystem",
                     action="read",

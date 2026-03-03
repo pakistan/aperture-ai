@@ -96,7 +96,7 @@ class TestPatchConfig:
             },
         })
         assert resp.status_code == 400
-        assert "must be greater" in resp.json()["detail"].lower()
+        assert "threshold" in resp.json()["detail"].lower()
 
     def test_patch_rejects_approve_equals_deny(self):
         app = create_app()

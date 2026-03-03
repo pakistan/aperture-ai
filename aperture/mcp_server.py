@@ -462,6 +462,7 @@ def get_audit_trail(
         entity_id: Filter by entity ID
         limit: Maximum number of events to return
     """
+    limit = min(limit, 500)
     events = _audit.list_events(
         organization_id=organization_id,
         event_type=event_type or None,
@@ -570,12 +571,12 @@ def _compute_compliance(session_id: str, organization_id: str) -> dict:
     checks = _audit.list_events(
         organization_id=organization_id,
         event_type="permission.check",
-        limit=10000,
+        limit=1000,
     )
     executions = _audit.list_events(
         organization_id=organization_id,
         event_type="tool.executed",
-        limit=10000,
+        limit=1000,
     )
 
     # Filter by session_id from details

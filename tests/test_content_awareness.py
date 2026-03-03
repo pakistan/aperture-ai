@@ -10,8 +10,8 @@ from aperture.permissions.challenge import create_challenge
 from aperture.permissions.engine import PermissionEngine
 
 
-def _make_challenge(tool: str, action: str, scope: str) -> dict:
-    token = create_challenge(tool, action, scope)
+def _make_challenge(tool: str, action: str, scope: str, organization_id: str = "default", session_id: str = "") -> dict:
+    token = create_challenge(tool, action, scope, organization_id=organization_id, session_id=session_id)
     return {
         "challenge": token.token,
         "challenge_nonce": token.nonce,
@@ -43,7 +43,7 @@ class TestContentHashCacheKey:
         )
 
         # Both should exist as separate entries in session cache
-        assert ("filesystem", "write", "main.py", "s1", "abc123") not in engine._session_cache
+        assert ("default", "filesystem", "write", "main.py", "s1", "abc123") not in engine._session_cache
         # Static rules don't populate the session cache — only session_memory lookups do
         # But the cache_key includes content_hash, so they won't collide
 
@@ -52,7 +52,7 @@ class TestContentHashCacheKey:
         engine = PermissionEngine()
 
         # Seed a cache entry directly
-        engine._session_cache[("filesystem", "read", "f.py", "s1", "hash1")] = PermissionDecision.ALLOW
+        engine._session_cache[("default", "filesystem", "read", "f.py", "s1", "hash1")] = PermissionDecision.ALLOW
 
         verdict = engine.check(
             tool="filesystem", action="read", scope="f.py",
@@ -67,7 +67,7 @@ class TestContentHashCacheKey:
         engine = PermissionEngine()
 
         # Seed cache with hash1
-        engine._session_cache[("filesystem", "read", "f.py", "s1", "hash1")] = PermissionDecision.ALLOW
+        engine._session_cache[("default", "filesystem", "read", "f.py", "s1", "hash1")] = PermissionDecision.ALLOW
 
         # Check with hash2 — should NOT get session_memory hit
         verdict = engine.check(
@@ -82,7 +82,7 @@ class TestContentHashCacheKey:
         """Empty content_hash matches cache entry with empty hash."""
         engine = PermissionEngine()
 
-        engine._session_cache[("filesystem", "read", "f.py", "s1", "")] = PermissionDecision.ALLOW
+        engine._session_cache[("default", "filesystem", "read", "f.py", "s1", "")] = PermissionDecision.ALLOW
 
         verdict = engine.check(
             tool="filesystem", action="read", scope="f.py",
@@ -101,7 +101,7 @@ class TestContentChangedFlag:
         engine = PermissionEngine()
 
         # Seed cache with old hash
-        engine._session_cache[("filesystem", "write", "main.py", "s1", "old_hash")] = PermissionDecision.ALLOW
+        engine._session_cache[("default", "filesystem", "write", "main.py", "s1", "old_hash")] = PermissionDecision.ALLOW
 
         # Build verdict with new hash
         verdict = engine._build_verdict(
@@ -115,7 +115,7 @@ class TestContentChangedFlag:
         """Same hash should not trigger content_changed."""
         engine = PermissionEngine()
 
-        engine._session_cache[("filesystem", "write", "main.py", "s1", "same")] = PermissionDecision.ALLOW
+        engine._session_cache[("default", "filesystem", "write", "main.py", "s1", "same")] = PermissionDecision.ALLOW
 
         verdict = engine._build_verdict(
             PermissionDecision.DENY, "static_rule",
@@ -139,7 +139,7 @@ class TestContentChangedFlag:
         """Empty content_hash never triggers content_changed."""
         engine = PermissionEngine()
 
-        engine._session_cache[("filesystem", "write", "main.py", "s1", "")] = PermissionDecision.ALLOW
+        engine._session_cache[("default", "filesystem", "write", "main.py", "s1", "")] = PermissionDecision.ALLOW
 
         verdict = engine._build_verdict(
             PermissionDecision.DENY, "static_rule",

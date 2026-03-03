@@ -100,17 +100,52 @@ def update_settings(
             f"Non-tunable fields cannot be updated at runtime: {sorted(bad_fields)}"
         )
 
-    # Cross-field validation
-    approve = updates.get("auto_approve_threshold", settings.auto_approve_threshold)
-    deny = updates.get("auto_deny_threshold", settings.auto_deny_threshold)
-    if approve <= deny:
+    # Type coercion — validate types match the field annotations
+    field_types = {
+        "permission_learning_enabled": bool,
+        "permission_learning_min_decisions": int,
+        "auto_approve_threshold": float,
+        "auto_deny_threshold": float,
+        "intelligence_enabled": bool,
+        "intelligence_epsilon": float,
+        "intelligence_min_orgs": int,
+    }
+    coerced: dict[str, Any] = {}
+    for field, value in updates.items():
+        expected_type = field_types.get(field)
+        if expected_type is not None:
+            try:
+                coerced[field] = expected_type(value)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"Invalid type for {field}: expected {expected_type.__name__}, got {type(value).__name__}"
+                )
+        else:
+            coerced[field] = value
+
+    # Range validation
+    approve = coerced.get("auto_approve_threshold", settings.auto_approve_threshold)
+    deny = coerced.get("auto_deny_threshold", settings.auto_deny_threshold)
+    if not (0.0 <= deny < approve <= 1.0):
         raise ValueError(
-            f"auto_approve_threshold ({approve}) must be greater than "
-            f"auto_deny_threshold ({deny})"
+            f"Thresholds must satisfy 0.0 <= auto_deny_threshold ({deny}) "
+            f"< auto_approve_threshold ({approve}) <= 1.0"
         )
 
-    # Apply in-memory
-    for field, value in updates.items():
+    min_decisions = coerced.get("permission_learning_min_decisions", settings.permission_learning_min_decisions)
+    if min_decisions < 1:
+        raise ValueError(f"permission_learning_min_decisions must be >= 1, got {min_decisions}")
+
+    epsilon = coerced.get("intelligence_epsilon", settings.intelligence_epsilon)
+    if epsilon <= 0:
+        raise ValueError(f"intelligence_epsilon must be > 0, got {epsilon}")
+
+    min_orgs = coerced.get("intelligence_min_orgs", settings.intelligence_min_orgs)
+    if min_orgs < 1:
+        raise ValueError(f"intelligence_min_orgs must be >= 1, got {min_orgs}")
+
+    # Apply in-memory (using coerced/validated values)
+    for field, value in coerced.items():
         object.__setattr__(settings, field, value)
 
     # Persist to .aperture.env

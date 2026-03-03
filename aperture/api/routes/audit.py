@@ -28,6 +28,7 @@ def list_events(
     offset: int = 0,
 ):
     """Query audit events with filters."""
+    limit = min(limit, 1000)
     try:
         since_dt = datetime.fromisoformat(since) if since else None
     except ValueError:
@@ -99,6 +100,7 @@ def entity_history(
     limit: int = 50,
 ):
     """Full audit history of a specific entity."""
+    limit = min(limit, 1000)
     events = store.get_entity_history(entity_type, entity_id, organization_id, limit)
     return {
         "entity_type": entity_type,

@@ -165,7 +165,7 @@ def find_similar_patterns(
             select(PermissionLog).where(
                 PermissionLog.organization_id == organization_id,
                 PermissionLog.decided_by.startswith("human:"),  # type: ignore[union-attr]
-            )
+            ).order_by(PermissionLog.created_at.desc()).limit(5000)  # type: ignore[union-attr]
         ).all()
 
     if not logs:
