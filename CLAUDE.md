@@ -14,8 +14,7 @@ Three core capabilities:
 ## Quick Start
 
 ```bash
-cd aiperture
-source .venv312/bin/activate
+pipx install aiperture             # install via pipx (recommended)
 aiperture configure                # interactive setup wizard (writes .aiperture.env)
 aiperture serve                    # start API server at localhost:8100
 aiperture mcp-serve                # start MCP server on stdio

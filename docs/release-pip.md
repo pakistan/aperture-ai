@@ -33,6 +33,37 @@ Releases are published to [PyPI](https://pypi.org/project/aiperture/) automatica
 
 The package will be live at https://pypi.org/project/aiperture/ within a minute.
 
+6. **Upgrade local install:**
+   ```bash
+   pipx upgrade aiperture --force
+   ```
+
+## Installing AIperture
+
+We recommend [pipx](https://pipx.pypa.io/) which installs the CLI in an isolated environment:
+
+```bash
+pipx install aiperture
+```
+
+To upgrade after a new release:
+
+```bash
+pipx upgrade aiperture
+```
+
+If pipx reports you're already at the latest version but you know a newer one exists, force it (pipx caches aggressively):
+
+```bash
+pipx upgrade aiperture --force
+```
+
+Or reinstall cleanly:
+
+```bash
+pipx uninstall aiperture && pipx install aiperture
+```
+
 ## How it works
 
 - `.github/workflows/publish.yml` triggers on `release: [published]`
