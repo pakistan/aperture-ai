@@ -71,7 +71,7 @@ aiperture/
 │   ├── metrics.py           # Prometheus counters, histograms, gauges for observability
 │   ├── plugins.py           # Plugin registry + Protocol definitions (open-core)
 │   ├── config.py            # Settings via AIPERTURE_* env vars + plugin config
-│   ├── cli.py               # CLI entry point (init-claude | serve | mcp-serve | init-db | configure | bootstrap | revoke)
+│   ├── cli.py               # CLI entry point (setup-claude | remove-claude | serve | mcp-serve | init-db | configure | bootstrap | revoke)
 │   └── mcp_server.py        # MCP server (14 tools, stdio transport) + plugin mcp_tools
 ├── docs/
 │   └── plugins.md           # Plugin development guide

@@ -22,7 +22,7 @@ aiperture --help
 ## Step 2: Set up AIperture for Claude Code
 
 ```bash
-aiperture init-claude --bootstrap=developer
+aiperture setup-claude --bootstrap=developer
 ```
 
 This does three things:
@@ -38,7 +38,7 @@ Options:
 If you already have a `.mcp.json`, AIperture is added alongside your existing MCP servers.
 
 <details>
-<summary>Manual setup (without init-claude)</summary>
+<summary>Manual setup (without setup-claude)</summary>
 
 ```bash
 aiperture init-db

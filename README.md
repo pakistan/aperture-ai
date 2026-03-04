@@ -82,7 +82,7 @@ You should see:
 AIperture — The permission layer for AI agents
 
 Commands:
-  init-claude  Set up AIperture as Claude Code's MCP permission layer
+  setup-claude  Set up AIperture as Claude Code's MCP permission layer
   mcp-serve    Run as MCP server (stdio transport)
   serve        Run HTTP API server
   init-db      Initialize the database
@@ -98,7 +98,7 @@ Pick whichever runtime you use:
 #### Claude Code (one command)
 
 ```bash
-aiperture init-claude --bootstrap=developer
+aiperture setup-claude --bootstrap=developer
 ```
 
 That's it. This creates `.mcp.json` in your project, initializes the database, and pre-seeds 75 safe patterns. Restart Claude Code and AIperture is active with 14 tools.
@@ -309,7 +309,7 @@ If you're a solo developer running Claude Code on personal projects, `CLAUDE.md`
 | **Circuit Breaker** | Database failures during permission checks fail closed (default deny), never crash or allow |
 | **REST API** | FastAPI server — works with any agent runtime over HTTP |
 | **MCP Server** | 14 tools for Claude Code and other MCP-compatible runtimes |
-| **CLI** | `aiperture init-claude`, `aiperture serve`, `aiperture init-db`, `aiperture configure`, `aiperture bootstrap`, `aiperture revoke` |
+| **CLI** | `aiperture setup-claude`, `aiperture remove-claude`, `aiperture serve`, `aiperture init-db`, `aiperture configure`, `aiperture bootstrap`, `aiperture revoke` |
 
 ## How decisions are made
 
