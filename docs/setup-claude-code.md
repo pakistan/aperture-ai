@@ -65,13 +65,24 @@ Optionally bootstrap: `aiperture bootstrap developer`
 
 ## Step 3: Start the AIperture server
 
-The hooks need the AIperture HTTP server running to function:
+AIperture has two servers that work differently:
+
+| | MCP server | HTTP API server |
+|---|---|---|
+| **Started by** | Claude Code (automatic via `.mcp.json`) | You (`aiperture serve`) |
+| **Transport** | stdio (built into Claude Code's process) | HTTP on `localhost:8100` |
+| **What it does** | Exposes 10 MCP tools (check_permission, etc.) | Handles hooks + REST API queries |
+| **If not running** | Claude Code shows MCP connection error | Hooks silently fail, Claude Code shows normal prompts |
+
+The **MCP server** starts automatically when Claude Code launches — you don't need to do anything.
+
+The **HTTP server** must be started separately for hooks to work:
 
 ```bash
 aiperture serve
 ```
 
-Leave this running in a terminal. If the server is not running, Claude Code falls back to its normal permission prompts (fail-open).
+Leave this running in a terminal (or run it as a background service). If you don't run it, hooks are inactive but everything else still works — you just won't get hook-based auto-approval, and the MCP path functions on its own.
 
 ## Step 4: Start using Claude Code
 
@@ -90,7 +101,7 @@ AIperture hooks into Claude Code's native permission flow via HTTP hooks. No dou
 
 ### MCP integration (for other runtimes)
 
-AIperture also runs as an MCP server with 14 tools. This path is used by non-Claude runtimes (OpenAI Agents SDK, LangChain, etc.) and provides explicit check/approve/deny calls with HMAC challenge-response.
+AIperture also runs as an MCP server with 10 read-only tools. This path is used by non-Claude runtimes (OpenAI Agents SDK, LangChain, etc.) and provides permission checking, artifact storage, and audit trail access. Decision recording (`approve_action`, `deny_action`) and revocation are only available via the HTTP API, where a human-controlled UI sits between check and approve.
 
 ### What to expect on first use
 
@@ -108,22 +119,20 @@ When you start your first Claude Code session with AIperture:
 
 This is what it looks like in practice:
 
-| Tool | What it does |
+| MCP Tool | What it does |
 |------|-------------|
 | `check_permission` | Check if an action is allowed (with risk assessment and HMAC challenge) |
-| `approve_action` | Record a human approval (requires valid challenge token) |
-| `deny_action` | Record a human denial (requires valid challenge token) |
 | `explain_action` | Get a human-readable explanation of what an action does |
 | `get_permission_patterns` | View what AIperture has learned from your decisions |
-| `report_tool_execution` | Report that a tool was executed (for compliance tracking) |
 | `get_compliance_report` | See which tool executions had prior permission checks |
-| `revoke_permission_pattern` | Undo a learned auto-approval pattern |
 | `list_auto_approved_patterns` | See all patterns currently being auto-approved |
 | `store_artifact` | Store an agent output with SHA-256 verification |
 | `verify_artifact` | Verify an artifact's integrity |
 | `get_cost_summary` | Get token and cost breakdown |
 | `get_audit_trail` | Query the compliance audit trail |
 | `get_config` | View current AIperture settings |
+
+**Not available via MCP** (HTTP API only): `approve_action`, `deny_action`, `revoke_permission_pattern`, `report_tool_execution`. These are excluded because an MCP caller (the AI agent) could relay HMAC tokens to self-approve without human involvement. Use hooks for Claude Code, or the HTTP API for runtimes with their own UI.
 
 ## AIperture vs Claude Code's built-in permissions
 
@@ -231,7 +240,7 @@ If AIperture learned to auto-approve something you no longer want:
 aiperture revoke shell execute "rm*"     # Revoke all rm-related auto-approvals
 ```
 
-Or use the MCP tool from within Claude Code — ask Claude to call `revoke_permission_pattern`. The pattern immediately requires fresh human decisions. Revoked records are preserved in the audit trail.
+Or use the HTTP API: `curl -X POST localhost:8100/permissions/revoke -d '{"tool":"shell","action":"execute","scope":"rm*","revoked_by":"admin"}'`. The pattern immediately requires fresh human decisions. Revoked records are preserved in the audit trail.
 
 ## Tuning the learning speed
 
@@ -280,16 +289,9 @@ AIperture includes several security hardening features that are active out of th
 - **Hash-chained audit trail** — Every audit event is cryptographically chained for tamper detection
 - **HMAC nonce persistence** — Challenge nonces survive server restarts, preventing replay attacks
 
-## Running the API server
+## Querying the API server
 
-The API server is **required** for hook-based integration. It handles the PermissionRequest and PostToolUse HTTP hooks from Claude Code:
-
-```bash
-# Start the API server (required for hooks)
-aiperture serve
-```
-
-The MCP server (stdio) runs separately inside Claude Code. Both can run at the same time — the API server handles hooks and REST queries, while MCP handles the 14 AIperture tools.
+With `aiperture serve` running (see Step 3), you can query the REST API from a browser or script:
 
 Query examples:
 

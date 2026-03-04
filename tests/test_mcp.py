@@ -3,6 +3,11 @@
 Each tool is a regular Python function decorated with @mcp.tool().
 They return JSON strings (or plain text) that we parse and assert on.
 The `fresh_db` autouse fixture in conftest.py handles per-test DB reset.
+
+Note: approve_action, deny_action, revoke_permission_pattern, and
+report_tool_execution are intentionally NOT exposed as MCP tools (see
+mcp_server.py docstring for security rationale). Tests that need to record
+human decisions use the engine's record_human_decision directly.
 """
 
 import json
@@ -11,9 +16,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from aiperture.mcp_server import (
-    approve_action,
     check_permission,
-    deny_action,
     explain_action,
     get_audit_trail,
     get_config,
@@ -22,16 +25,6 @@ from aiperture.mcp_server import (
     store_artifact,
     verify_artifact,
 )
-
-
-def _get_challenge(tool: str, action: str, scope: str, session_id: str = "", organization_id: str = "default") -> dict:
-    """Helper: call check_permission and extract challenge fields from the verdict."""
-    result = json.loads(check_permission(tool=tool, action=action, scope=scope, session_id=session_id, organization_id=organization_id))
-    return {
-        "challenge": result.get("challenge", ""),
-        "challenge_nonce": result.get("challenge_nonce", ""),
-        "challenge_issued_at": result.get("challenge_issued_at", 0.0),
-    }
 
 
 # ---- Wiring test --------------------------------------------------------
@@ -44,8 +37,6 @@ class TestMCPToolsImportable:
         """Every MCP tool function is importable from the public module."""
         for fn in (
             check_permission,
-            approve_action,
-            deny_action,
             explain_action,
             get_permission_patterns,
             store_artifact,
@@ -60,6 +51,26 @@ class TestMCPToolsImportable:
         """update_config is NOT an MCP tool — config changes only via CLI/REST."""
         import aiperture.mcp_server as mod
         assert not hasattr(mod, "update_config"), "update_config should not be an MCP tool"
+
+    def test_approve_action_not_exposed(self):
+        """approve_action is NOT an MCP tool — agents can relay HMAC tokens to self-approve."""
+        import aiperture.mcp_server as mod
+        assert not hasattr(mod, "approve_action"), "approve_action should not be an MCP tool"
+
+    def test_deny_action_not_exposed(self):
+        """deny_action is NOT an MCP tool — agents can poison learning with fake denials."""
+        import aiperture.mcp_server as mod
+        assert not hasattr(mod, "deny_action"), "deny_action should not be an MCP tool"
+
+    def test_revoke_permission_pattern_not_exposed(self):
+        """revoke_permission_pattern is NOT an MCP tool — agents can DoS the learning system."""
+        import aiperture.mcp_server as mod
+        assert not hasattr(mod, "revoke_permission_pattern"), "revoke_permission_pattern should not be an MCP tool"
+
+    def test_report_tool_execution_not_exposed(self):
+        """report_tool_execution is NOT an MCP tool — agents can fabricate compliance data."""
+        import aiperture.mcp_server as mod
+        assert not hasattr(mod, "report_tool_execution"), "report_tool_execution should not be an MCP tool"
 
 
 # ---- check_permission ----------------------------------------------------
@@ -92,7 +103,7 @@ class TestCheckPermission:
         assert result["decision"] == "ask"
 
     def test_check_permission_ask_has_challenge(self):
-        """ASK verdict includes HMAC challenge for approve/deny flow."""
+        """ASK verdict includes HMAC challenge for HTTP API approve/deny flow."""
         result = json.loads(check_permission(
             tool="shell", action="execute", scope="deploy.sh",
         ))
@@ -140,18 +151,24 @@ class TestCheckPermission:
         assert "permission.check" in trail
 
     def test_check_permission_with_session_id(self):
-        """Session memory: approve once, then check with same session reuses decision."""
-        # First get a challenge (with matching session_id for HMAC binding)
-        ch = _get_challenge("shell", "execute", "test.sh", session_id="session-xyz")
+        """Session memory: approve via engine, then check with same session reuses decision."""
+        from aiperture.mcp_server import _engine
+        from aiperture.models.permission import PermissionDecision
+        from aiperture.permissions.challenge import create_challenge
 
-        # Record a human approval with session
-        approve_action(
+        # Create a valid challenge and record approval via engine directly
+        ch = create_challenge("shell", "execute", "test.sh", organization_id="default", session_id="session-xyz")
+        _engine.record_human_decision(
             tool="shell",
             action="execute",
             scope="test.sh",
+            decision=PermissionDecision.ALLOW,
             decided_by="user-1",
             session_id="session-xyz",
-            **ch,
+            organization_id="default",
+            challenge=ch.token,
+            challenge_nonce=ch.nonce,
+            challenge_issued_at=ch.issued_at,
         )
 
         # Now check with same session_id — should be allowed from session memory
@@ -163,165 +180,6 @@ class TestCheckPermission:
         ))
         assert result["decision"] == "allow"
         assert result["decided_by"] == "session_memory"
-
-
-# ---- approve_action ------------------------------------------------------
-
-
-class TestApproveAction:
-    """approve_action records a human approval (requires valid challenge)."""
-
-    def test_approve_with_valid_challenge(self):
-        """Response includes recorded: true with valid challenge."""
-        ch = _get_challenge("filesystem", "read", "src/*.py")
-        result = json.loads(approve_action(
-            tool="filesystem",
-            action="read",
-            scope="src/*.py",
-            decided_by="admin",
-            **ch,
-        ))
-        assert result["recorded"] is True
-        assert result["decision"] == "allow"
-        assert result["tool"] == "filesystem"
-        assert result["scope"] == "src/*.py"
-
-    def test_approve_without_challenge_raises(self):
-        """Approve without challenge raises ToolError."""
-        with pytest.raises(ToolError, match="challenge"):
-            approve_action(
-                tool="filesystem",
-                action="read",
-                scope="src/*.py",
-                decided_by="admin",
-            )
-
-    def test_approve_with_fabricated_challenge_raises(self):
-        """Fabricated challenge is rejected."""
-        with pytest.raises(ToolError, match="challenge"):
-            approve_action(
-                tool="filesystem",
-                action="read",
-                scope="src/*.py",
-                decided_by="admin",
-                challenge="fake_token",
-                challenge_nonce="fake_nonce",
-                challenge_issued_at=0.0,
-            )
-
-    def test_approve_with_task_id_creates_grant(self):
-        """When task_id is provided, a task-scoped grant is also created."""
-        ch = _get_challenge("shell", "execute", "deploy.sh")
-        approve_action(
-            tool="shell",
-            action="execute",
-            scope="deploy.sh",
-            decided_by="admin",
-            task_id="task-42",
-            **ch,
-        )
-
-        # The task grant should make subsequent checks pass
-        result = json.loads(check_permission(
-            tool="shell",
-            action="execute",
-            scope="deploy.sh",
-            task_id="task-42",
-        ))
-        assert result["decision"] == "allow"
-
-    def test_approve_with_reasoning(self):
-        """Reasoning is accepted without error."""
-        ch = _get_challenge("api", "post", "users/create")
-        result = json.loads(approve_action(
-            tool="api",
-            action="post",
-            scope="users/create",
-            decided_by="admin",
-            reasoning="Needed for onboarding workflow",
-            **ch,
-        ))
-        assert result["recorded"] is True
-
-    def test_approve_with_organization_id(self):
-        """Custom organization_id is accepted."""
-        ch = _get_challenge("filesystem", "read", "docs/*", organization_id="acme-corp")
-        result = json.loads(approve_action(
-            tool="filesystem",
-            action="read",
-            scope="docs/*",
-            decided_by="user-1",
-            organization_id="acme-corp",
-            **ch,
-        ))
-        assert result["recorded"] is True
-
-
-# ---- deny_action ---------------------------------------------------------
-
-
-class TestDenyAction:
-    """deny_action records a human denial (requires valid challenge)."""
-
-    def test_deny_with_valid_challenge(self):
-        """Response includes recorded: true with valid challenge."""
-        ch = _get_challenge("shell", "execute", "rm -rf /")
-        result = json.loads(deny_action(
-            tool="shell",
-            action="execute",
-            scope="rm -rf /",
-            decided_by="admin",
-            **ch,
-        ))
-        assert result["recorded"] is True
-        assert result["decision"] == "deny"
-        assert result["tool"] == "shell"
-        assert result["scope"] == "rm -rf /"
-
-    def test_deny_without_challenge_raises(self):
-        """Deny without challenge raises ToolError."""
-        with pytest.raises(ToolError, match="challenge"):
-            deny_action(
-                tool="shell",
-                action="execute",
-                scope="rm -rf /",
-                decided_by="admin",
-            )
-
-    def test_deny_with_session_id(self):
-        """Denial with session_id caches the denial for the session."""
-        ch = _get_challenge("shell", "execute", "dangerous.sh", session_id="session-block")
-        deny_action(
-            tool="shell",
-            action="execute",
-            scope="dangerous.sh",
-            decided_by="admin",
-            session_id="session-block",
-            **ch,
-        )
-
-        # Same check with same session_id should be denied
-        result = json.loads(check_permission(
-            tool="shell",
-            action="execute",
-            scope="dangerous.sh",
-            session_id="session-block",
-        ))
-        assert result["decision"] == "deny"
-        assert result["decided_by"] == "session_memory"
-
-    def test_deny_with_reasoning(self):
-        """Reasoning is accepted for audit trail."""
-        ch = _get_challenge("database", "drop", "users_table")
-        result = json.loads(deny_action(
-            tool="database",
-            action="drop",
-            scope="users_table",
-            decided_by="dba",
-            reasoning="Never drop production tables",
-            **ch,
-        ))
-        assert result["recorded"] is True
 
 
 # ---- explain_action ------------------------------------------------------
@@ -410,6 +268,7 @@ class TestGetPermissionPatterns:
 
         # Record 10 human approvals for the same pattern (bypass engine, insert directly)
         from aiperture.mcp_server import _engine
+        from aiperture.models.permission import PermissionDecision
         from aiperture.permissions.challenge import create_challenge
 
         for i in range(10):
@@ -418,7 +277,7 @@ class TestGetPermissionPatterns:
                 tool="filesystem",
                 action="read",
                 scope="docs/*",
-                decision=__import__("aiperture.models.permission", fromlist=["PermissionDecision"]).PermissionDecision.ALLOW,
+                decision=PermissionDecision.ALLOW,
                 decided_by=f"user-{i % 3}",
                 organization_id="default",
                 challenge=ch.token,
@@ -684,10 +543,14 @@ class TestGetAuditTrail:
 
 
 class TestEndToEndWorkflow:
-    """Integration: full permission lifecycle via MCP tools."""
+    """Integration: full permission lifecycle via MCP tools and engine."""
 
     def test_check_approve_recheck_flow(self):
-        """Full flow: check (ask) -> approve -> check with session (allow)."""
+        """Full flow: check (ask) -> approve via engine -> check with session (allow)."""
+        from aiperture.mcp_server import _engine
+        from aiperture.models.permission import PermissionDecision
+        from aiperture.permissions.challenge import create_challenge
+
         # Step 1: Initial check returns ask (no rules, no history)
         r1 = json.loads(check_permission(
             tool="shell",
@@ -697,18 +560,20 @@ class TestEndToEndWorkflow:
         ))
         assert r1["decision"] == "ask"
 
-        # Step 2: Human approves (using challenge from step 1)
-        approve = json.loads(approve_action(
+        # Step 2: Human approves via engine (simulating HTTP API or hook path)
+        ch = create_challenge("shell", "execute", "deploy.sh", organization_id="default", session_id="session-e2e")
+        _engine.record_human_decision(
             tool="shell",
             action="execute",
             scope="deploy.sh",
+            decision=PermissionDecision.ALLOW,
             decided_by="admin",
             session_id="session-e2e",
-            challenge=r1["challenge"],
-            challenge_nonce=r1["challenge_nonce"],
-            challenge_issued_at=r1["challenge_issued_at"],
-        ))
-        assert approve["recorded"] is True
+            organization_id="default",
+            challenge=ch.token,
+            challenge_nonce=ch.nonce,
+            challenge_issued_at=ch.issued_at,
+        )
 
         # Step 3: Same session check is now allowed via session memory
         r2 = json.loads(check_permission(
@@ -750,15 +615,23 @@ class TestEndToEndWorkflow:
         assert "artifact.stored" in trail
 
     def test_deny_persists_in_session(self):
-        """Denied actions stay denied for the session."""
-        ch = _get_challenge("database", "drop", "production.users", session_id="session-safe")
-        deny_action(
+        """Denied actions stay denied for the session (via engine)."""
+        from aiperture.mcp_server import _engine
+        from aiperture.models.permission import PermissionDecision
+        from aiperture.permissions.challenge import create_challenge
+
+        ch = create_challenge("database", "drop", "production.users", organization_id="default", session_id="session-safe")
+        _engine.record_human_decision(
             tool="database",
             action="drop",
             scope="production.users",
+            decision=PermissionDecision.DENY,
             decided_by="dba",
             session_id="session-safe",
-            **ch,
+            organization_id="default",
+            challenge=ch.token,
+            challenge_nonce=ch.nonce,
+            challenge_issued_at=ch.issued_at,
         )
 
         result = json.loads(check_permission(
@@ -771,21 +644,29 @@ class TestEndToEndWorkflow:
         assert result["decided_by"] == "session_memory"
 
     def test_agent_self_approval_blocked(self):
-        """Agent cannot self-approve without a valid challenge token."""
-        # Step 1: Check → ask (default)
+        """approve_action and deny_action are not exposed as MCP tools.
+
+        The agent cannot self-approve because the tools don't exist in the
+        MCP server. The HMAC challenge is still included in verdicts for
+        HTTP API consumers with their own UI layers.
+        """
+        import aiperture.mcp_server as mod
+
+        # Verify the dangerous tools are not exposed
+        assert not hasattr(mod, "approve_action")
+        assert not hasattr(mod, "deny_action")
+        assert not hasattr(mod, "revoke_permission_pattern")
+        assert not hasattr(mod, "report_tool_execution")
+
+        # check_permission still works and returns ASK with challenge
         r1 = json.loads(check_permission(
             tool="shell", action="execute", scope="dangerous.sh",
         ))
         assert r1["decision"] == "ask"
+        assert r1["challenge"]  # still present for HTTP API consumers
 
-        # Step 2: Agent tries to approve without challenge → blocked
-        with pytest.raises(ToolError, match="challenge"):
-            approve_action(
-                tool="shell", action="execute", scope="dangerous.sh",
-                decided_by="user",
-            )
-
-        # Step 3: Still ask (not auto-approved)
+        # Without approve/deny tools, the agent has no way to record decisions
+        # via MCP. The action stays as "ask" indefinitely.
         r2 = json.loads(check_permission(
             tool="shell", action="execute", scope="dangerous.sh",
         ))

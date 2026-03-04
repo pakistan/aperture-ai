@@ -75,7 +75,7 @@ aiperture/
 │   ├── plugins.py           # Plugin registry + Protocol definitions (open-core)
 │   ├── config.py            # Settings via AIPERTURE_* env vars + plugin config
 │   ├── cli.py               # CLI entry point (setup-claude | remove-claude | serve | mcp-serve | init-db | configure | bootstrap | revoke)
-│   └── mcp_server.py        # MCP server (14 tools, stdio transport) + plugin mcp_tools
+│   └── mcp_server.py        # MCP server (10 tools, stdio transport) + plugin mcp_tools
 ├── docs/
 │   ├── releasing.md         # Release process index
 │   ├── release-pip.md       # PyPI publishing workflow
@@ -134,20 +134,15 @@ aiperture/
 
 ## MCP Tools
 
-14 tools exposed via MCP (stdio transport):
+10 tools exposed via MCP (stdio transport). All are read-only or append-only — no mutation tools that an agent could abuse:
 
 ### Permission tools
 - `check_permission` — Enriched permission check with risk, explanation, crowd signal, HMAC challenge
-- `approve_action` / `deny_action` — Record human decisions (requires valid HMAC challenge token)
 - `explain_action` — Human-readable explanation with risk assessment
 - `get_permission_patterns` — View learned auto-approve/deny patterns
 
 ### Compliance tools
-- `report_tool_execution` — Report that an agent executed a tool (for compliance tracking)
 - `get_compliance_report` — Compare executions vs permission checks to find compliance gaps
-
-### Revocation tools
-- `revoke_permission_pattern` — Revoke auto-approval for a (tool, action, scope) pattern
 - `list_auto_approved_patterns` — List all patterns currently being auto-approved
 
 ### Artifact tools
@@ -158,10 +153,17 @@ aiperture/
 - `get_audit_trail` — Compliance audit trail
 - `get_config` — Read tunable configuration settings
 
+### Tools intentionally NOT exposed via MCP
+- `approve_action` / `deny_action` — Agent can relay HMAC challenge tokens to self-approve (see Security Architecture §20)
+- `revoke_permission_pattern` — Agent can sabotage the learning system
+- `report_tool_execution` — Agent can fabricate compliance data
+
+These are available via the HTTP API (`/permissions/record`, `aiperture revoke`) for runtimes with their own UI layers.
+
 ## Security Architecture
 
 1. **HTTP API authentication** — Optional bearer token auth via `AIPERTURE_API_KEY` env var. When set, all HTTP API routes require `Authorization: Bearer <key>`. MCP server (stdio) is unaffected. When unset, open access for local development.
-2. **HMAC challenge-response** — Every non-ALLOW verdict includes a cryptographic challenge token (HMAC-SHA256 signed with a server-side secret in `challenge.py`). `approve_action`/`deny_action` require a valid challenge, preventing agents from self-approving without human involvement.
+2. **HMAC challenge-response** — Every non-ALLOW verdict includes a cryptographic challenge token (HMAC-SHA256 signed with a server-side secret in `challenge.py`). `approve_action`/`deny_action` require a valid challenge, preventing token *forgery*. Note: HMAC does not prevent token *relay* — see §20.
 3. **No config mutation via MCP** — The `update_config` MCP tool was removed. Agents can read config (`get_config`) but cannot lower thresholds. Config changes require the CLI wizard or HTTP API.
 4. **Deep risk analysis** — `risk.py` unpacks shell wrappers (`bash -c`, `sudo`), pipe-to-exec (`curl | sh`), scripting oneliners (`python -c "os.system(...)"`), and `find -exec`. Inner command risk is what counts. Recursion depth is capped at 5 levels to prevent DoS. HIGH/CRITICAL actions are never auto-approved.
 5. **Fail-closed circuit breaker** — If the database becomes unavailable during a permission check, the engine fails closed (falls through to default decision). The default decision is ASK (configurable to DENY via `AIPERTURE_DEFAULT_DECISION`). The `GET /health` endpoint probes database connectivity.
@@ -178,7 +180,8 @@ aiperture/
 16. **HMAC nonce persistence** — `ConsumedNonce` SQLModel table persists used nonces to database. In-memory cache as first-level check, DB as fallback. Closes replay attack window across server restarts.
 17. **Hash-chained audit trail** — Each `AuditEvent` stores `previous_hash` and `event_hash` (SHA-256). `GET /audit/verify-chain` walks the chain to detect tampering, deletions, or reordering. SOC 2 compliant.
 18. **Prometheus metrics** — `GET /metrics` endpoint exposes `aiperture_permission_checks_total`, `aiperture_permission_check_duration_seconds`, cache hit/miss counters, auto-approve/deny counters, rate limit counters, risk budget exhaustion counters, hook metrics, and audit metrics.
-19. **Claude Code hook integration** — `PermissionRequest` and `PostToolUse` hooks learn from Claude Code's native permission flow. No HMAC required (Claude Code's own permission dialog is the human gate). HIGH/CRITICAL risk actions are never auto-approved via hooks. Auto-approved actions are tracked to prevent double-counting in PostToolUse. Fail-open: if AIperture server is down, hooks return non-2xx and Claude Code shows normal prompts.
+19. **Claude Code hook integration** — `PermissionRequest` and `PostToolUse` hooks learn from Claude Code's native permission flow. No HMAC required (Claude Code's own permission dialog is the human gate). HIGH/CRITICAL risk actions are never auto-approved via hooks. Auto-approved actions are tracked to prevent double-counting in PostToolUse. Fail-open: if AIperture server is down, hooks return non-2xx and Claude Code shows normal prompts. **Hooks are the only learning path for Claude Code** — the MCP tools are read-only.
+20. **MCP tool surface hardening** — `approve_action`, `deny_action`, `revoke_permission_pattern`, and `report_tool_execution` are NOT exposed as MCP tools. An MCP caller (the AI agent) has direct access to both `check_permission` and `approve_action` — it can relay the HMAC challenge token to self-approve without human involvement. After enough self-approvals, the learning engine auto-approves the pattern permanently. The HMAC prevents *forgery* but not *relay*. These tools remain available via the HTTP API for runtimes with their own UI layers (where a human-controlled interface sits between check and approve).
 
 ## Architecture Rules
 

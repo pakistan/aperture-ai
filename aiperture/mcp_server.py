@@ -1,5 +1,14 @@
-"""AIperture MCP Server — exposes permission checking, artifact storage,
-and audit trail as MCP tools for Claude Code and any MCP-compatible runtime.
+"""AIperture MCP Server — exposes 10 read-only/append-only tools for
+permission checking, artifact storage, and audit trail via MCP.
+
+approve_action, deny_action, revoke_permission_pattern, and
+report_tool_execution are intentionally NOT exposed as MCP tools.
+An MCP caller (the AI agent) has direct access to both check_permission
+and approve/deny — it can relay the HMAC challenge token to self-approve
+without human involvement. The HMAC prevents *forgery* but not *relay*.
+For Claude Code, use the hook-based integration (PermissionRequest +
+PostToolUse) where Claude Code's native permission dialog is the human gate.
+For other runtimes with their own UI layer, use the HTTP API.
 
 Usage:
     aiperture mcp-serve          # via CLI
@@ -19,9 +28,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from aiperture import plugins
 from aiperture.db import init_db
-from aiperture.models.permission import PermissionDecision
 from aiperture.permissions.engine import PermissionEngine
-from aiperture.permissions.intelligence import IntelligenceEngine
 from aiperture.permissions.learning import PermissionLearner
 from aiperture.stores.artifact_store import ArtifactStore
 from aiperture.stores.audit_store import AuditStore
@@ -59,7 +66,6 @@ mcp = FastMCP(
 
 # Shared instances
 _engine = PermissionEngine()
-_intelligence = IntelligenceEngine()
 _learner = PermissionLearner()
 _artifacts = ArtifactStore()
 _audit = AuditStore()
@@ -129,134 +135,6 @@ def check_permission(
     )
 
     return json.dumps(verdict.to_dict(), indent=2)
-
-
-@mcp.tool()
-def approve_action(
-    tool: str,
-    action: str,
-    scope: str,
-    decided_by: str,
-    challenge: str = "",
-    challenge_nonce: str = "",
-    challenge_issued_at: float = 0.0,
-    task_id: str = "",
-    session_id: str = "",
-    reasoning: str = "",
-    organization_id: str = "default",
-) -> str:
-    """Record that a human approved an AI agent action.
-
-    IMPORTANT: You must include the challenge, challenge_nonce, and
-    challenge_issued_at values from the original check_permission verdict.
-    These prove a human saw the verdict before approving.
-
-    Args:
-        tool: Tool name that was approved
-        action: Action that was approved
-        scope: Resource scope that was approved
-        decided_by: Who approved it (user identifier)
-        challenge: Challenge token from the original check_permission verdict
-        challenge_nonce: Nonce from the original check_permission verdict
-        challenge_issued_at: Timestamp from the original check_permission verdict
-        task_id: Optional task ID to also create a task-scoped grant
-        session_id: Optional session ID (caches approval for this session)
-        reasoning: Why the human approved (optional, helps with auditing)
-        organization_id: Tenant identifier
-    """
-    try:
-        _engine.record_human_decision(
-            tool=tool,
-            action=action,
-            scope=scope,
-            decision=PermissionDecision.ALLOW,
-            decided_by=decided_by,
-            challenge=challenge,
-            challenge_nonce=challenge_nonce,
-            challenge_issued_at=challenge_issued_at,
-            task_id=task_id,
-            session_id=session_id,
-            organization_id=organization_id,
-            runtime_id="mcp",
-            reasoning=reasoning,
-        )
-    except ValueError as e:
-        raise ToolError(str(e))
-
-    # Also grant task-scoped permission if task_id provided
-    if task_id:
-        _engine.grant_task_permission(
-            task_id=task_id,
-            tool=tool,
-            action=action,
-            scope=scope,
-            decision=PermissionDecision.ALLOW,
-            granted_by=decided_by,
-            organization_id=organization_id,
-        )
-
-    # Report to cross-org intelligence (DP-protected)
-    _intelligence.report_decision(tool, action, scope, decision_is_allow=True)
-
-    return json.dumps({"recorded": True, "decision": "allow", "tool": tool, "scope": scope})
-
-
-@mcp.tool()
-def deny_action(
-    tool: str,
-    action: str,
-    scope: str,
-    decided_by: str,
-    challenge: str = "",
-    challenge_nonce: str = "",
-    challenge_issued_at: float = 0.0,
-    task_id: str = "",
-    session_id: str = "",
-    reasoning: str = "",
-    organization_id: str = "default",
-) -> str:
-    """Record that a human denied an AI agent action.
-
-    IMPORTANT: You must include the challenge, challenge_nonce, and
-    challenge_issued_at values from the original check_permission verdict.
-    These prove a human saw the verdict before denying.
-
-    Args:
-        tool: Tool name that was denied
-        action: Action that was denied
-        scope: Resource scope that was denied
-        decided_by: Who denied it (user identifier)
-        challenge: Challenge token from the original check_permission verdict
-        challenge_nonce: Nonce from the original check_permission verdict
-        challenge_issued_at: Timestamp from the original check_permission verdict
-        task_id: Optional task ID
-        session_id: Optional session ID (caches denial for this session)
-        reasoning: Why the human denied (optional, helps with auditing)
-        organization_id: Tenant identifier
-    """
-    try:
-        _engine.record_human_decision(
-            tool=tool,
-            action=action,
-            scope=scope,
-            decision=PermissionDecision.DENY,
-            decided_by=decided_by,
-            challenge=challenge,
-            challenge_nonce=challenge_nonce,
-            challenge_issued_at=challenge_issued_at,
-            task_id=task_id,
-            session_id=session_id,
-            organization_id=organization_id,
-            runtime_id="mcp",
-            reasoning=reasoning,
-        )
-    except ValueError as e:
-        raise ToolError(str(e))
-
-    # Report to cross-org intelligence (DP-protected)
-    _intelligence.report_decision(tool, action, scope, decision_is_allow=False)
-
-    return json.dumps({"recorded": True, "decision": "deny", "tool": tool, "scope": scope})
 
 
 @mcp.tool()
@@ -515,46 +393,6 @@ def get_config() -> str:
 
 
 @mcp.tool()
-def report_tool_execution(
-    tool: str,
-    action: str,
-    scope: str,
-    session_id: str = "",
-    organization_id: str = "default",
-) -> str:
-    """Report that an AI agent executed a tool action.
-
-    Call this AFTER the agent executes a tool to create a compliance record.
-    The compliance report compares these execution records against prior
-    permission checks to identify unchecked tool usage.
-
-    Args:
-        tool: Tool that was executed
-        action: Action that was performed
-        scope: Resource scope affected
-        session_id: Session identifier (used to match against prior checks)
-        organization_id: Tenant identifier
-    """
-    _audit.record(
-        event_type="tool.executed",
-        summary=f"Executed: {tool}.{action} on {scope}",
-        organization_id=organization_id,
-        entity_type="tool_execution",
-        entity_id=f"{tool}.{action}.{scope}",
-        actor_type="runtime",
-        runtime_id="mcp",
-        details={
-            "tool": tool,
-            "action": action,
-            "scope": scope,
-            "session_id": session_id,
-        },
-    )
-
-    return json.dumps({"recorded": True, "tool": tool, "action": action, "scope": scope})
-
-
-@mcp.tool()
 def get_compliance_report(
     session_id: str = "",
     organization_id: str = "default",
@@ -638,66 +476,7 @@ def _compute_compliance(session_id: str, organization_id: str) -> dict:
     }
 
 
-# ─── Revocation Tools ───────────────────────────────────────────
-
-
-@mcp.tool()
-def revoke_permission_pattern(
-    tool: str,
-    action: str,
-    scope: str,
-    revoked_by: str,
-    organization_id: str = "default",
-) -> str:
-    """Revoke auto-approval for a permission pattern.
-
-    Marks all matching learned decisions as revoked (soft delete).
-    After revocation, the pattern will no longer auto-approve and
-    will require fresh human decisions.
-
-    The revocation is logged in the audit trail. Revoked decisions
-    are preserved for auditing but excluded from learning.
-
-    Args:
-        tool: Tool name to revoke (exact match)
-        action: Action name to revoke (exact match)
-        scope: Scope pattern to revoke (exact or glob)
-        revoked_by: Who is revoking (user identifier)
-        organization_id: Tenant identifier
-    """
-    count = _engine.revoke_pattern(
-        tool=tool,
-        action=action,
-        scope=scope,
-        revoked_by=revoked_by,
-        organization_id=organization_id,
-    )
-
-    _audit.record(
-        event_type="permission.revoked",
-        summary=f"Revoked {count} decisions for {tool}.{action} on {scope}",
-        organization_id=organization_id,
-        entity_type="permission",
-        entity_id=f"{tool}.{action}.{scope}",
-        actor_type="human",
-        actor_id=revoked_by,
-        runtime_id="mcp",
-        details={
-            "tool": tool,
-            "action": action,
-            "scope": scope,
-            "revoked_by": revoked_by,
-            "revoked_count": count,
-        },
-    )
-
-    return json.dumps({
-        "revoked": True,
-        "count": count,
-        "tool": tool,
-        "action": action,
-        "scope": scope,
-    })
+# ─── Pattern Inspection Tools ────────────────────────────────────
 
 
 @mcp.tool()

@@ -11,6 +11,19 @@ Security properties:
 - Tokens are bound to (tool, action, scope, organization_id, session_id)
 - Tokens are single-use (consumed nonces are tracked and rejected)
 - Server secret persists across restarts via AIPERTURE_HMAC_SECRET env var
+
+IMPORTANT — forgery vs relay:
+    HMAC prevents an agent from *forging* a challenge token. However, it does
+    NOT prevent an agent from *relaying* a valid token. When the agent has
+    direct access to both check_permission (which returns a valid token) and
+    approve_action (which consumes it), the agent can call check → approve in
+    sequence and self-approve without any human involvement.
+
+    This is why approve_action/deny_action are NOT exposed as MCP tools.
+    In the MCP path (where the agent is the caller), the hook-based
+    integration is safe because Claude Code's native permission dialog is
+    the human gate. In the HTTP API path, the assumption is that a
+    human-controlled UI sits between check and approve.
 """
 
 import hashlib
