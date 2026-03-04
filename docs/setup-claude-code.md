@@ -2,6 +2,60 @@
 
 This guide walks you through adding AIperture as Claude Code's permission layer via MCP (Model Context Protocol). After setup, Claude Code will check permissions through AIperture before taking actions, and AIperture will learn your preferences over time.
 
+## How it fits into your Claude Code setup
+
+```
+Your project directory
+├── .mcp.json                          ← AIperture MCP server config
+├── .claude/
+│   └── settings.json                  ← hooks added here
+├── aiperture.db                       ← learned patterns + audit trail
+└── (your code)
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  CLAUDE CODE                                                             │
+│                                                                          │
+│  ┌────────┐    1. Claude wants         ┌────────────────────────────┐    │
+│  │        │       to run a tool        │  AIperture HTTP Server     │    │
+│  │ Claude │ ─── PermissionRequest ───▶ │  (localhost:8100)          │    │
+│  │        │     hook fires             │                            │    │
+│  │        │ ◀─────────────────────── ──│  Checks learned patterns:  │    │
+│  │        │                            │  • ALLOW → auto-approve    │    │
+│  │        │  2a. Learned pattern:      │  • DENY  → auto-deny      │    │
+│  │        │      skip prompt,          │  • ???   → no opinion,     │    │
+│  │        │      run tool              │    show normal prompt      │    │
+│  │        │                            │                            │    │
+│  │        │  2b. No pattern:           └────────────┬───────────────┘    │
+│  │        │      show "Allow?" prompt               │                    │
+│  │        │      user approves/denies               │                    │
+│  │        │                                         │ reads/writes       │
+│  │        │  3. Tool executed          ┌────────────▼───────────────┐    │
+│  │        │     successfully           │                            │    │
+│  │        │ ─── PostToolUse ─────────▶ │  aiperture.db              │    │
+│  │        │     hook fires             │  (SQLite)                  │    │
+│  │        │                            │                            │    │
+│  │        │  Records implicit approval │  • Permission decisions    │    │
+│  │        │  (user approved via the    │  • Learned patterns        │    │
+│  │        │   Claude Code prompt)      │  • Audit trail (hashed)   │    │
+│  └────────┘                            │  • Artifacts              │    │
+│                                         └───────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────────────────┐     │
+│  │  AIperture MCP Server (stdio, started automatically)            │     │
+│  │  10 read-only tools: check_permission, explain_action,          │     │
+│  │  get_audit_trail, store_artifact, verify_artifact, ...          │     │
+│  └─────────────────────────────────────────────────────────────────┘     │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Learning loop:
+  Approval 1 of 10 ... 2 of 10 ... 10 of 10 → auto-approve kicks in
+  Permission prompt stops appearing for that action.
+  HIGH/CRITICAL risk actions ALWAYS prompt (rm -rf, sudo, etc.)
+```
+
+`aiperture setup-claude` creates the `.mcp.json`, hooks in `.claude/settings.json`, and the database. You run `aiperture serve` separately for the HTTP server. The MCP server starts automatically when Claude Code launches.
+
 ## Prerequisites
 
 - Python 3.12+
@@ -188,36 +242,39 @@ With hooks, AIperture works *within* Claude Code's permission flow — not along
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### MCP-based flow (for other runtimes)
+### HTTP API flow (for other runtimes)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                                                                     │
-│  AI Agent                        AIperture (MCP)                     │
-│  ────────                        ──────────────                     │
+│  AI Agent + UI Layer             AIperture (HTTP API)                │
+│  ───────────────────             ───────────────────                │
 │                                                                     │
-│  "I need to run npm test"                                           │
+│  Agent: "I need to run npm test"                                    │
 │         │                                                           │
-│         ├──── check_permission ────▶  No history for this action.   │
-│         │     tool: shell              Decision: ASK                │
-│         │     action: execute          + HMAC challenge             │
-│         │     scope: npm test    ◀──── Return verdict ────┤         │
+│         ├──── POST /permissions/check ──▶  No history.              │
+│         │     tool: shell                  Decision: ASK            │
+│         │     action: execute              + HMAC challenge         │
+│         │     scope: npm test        ◀──── Return verdict ────┤     │
 │         │                                                           │
-│  "Permission needed. Approve?"                                      │
+│  UI shows: "Permission needed. Approve?"                            │
 │         │                                                           │
-│  User:  "Yes"                                                       │
+│  User clicks "Yes" in the UI                                        │
 │         │                                                           │
-│         ├──── approve_action ─────▶  Recorded. (1 of 10 needed)     │
-│         │     + challenge token        (HMAC verified)              │
+│         ├──── POST /permissions/record ─▶  Recorded. (1 of 10)     │
+│         │     + challenge token             (HMAC verified)         │
 │         │                                                           │
 │         │     ... 9 more approvals over time ...                    │
 │         │                                                           │
-│         ├──── check_permission ────▶  10/10 approvals at 100%.      │
-│         │     tool: shell              Decision: ALLOW              │
-│         │     action: execute          Decided by: auto_learned     │
-│         │     scope: npm test    ◀──── Return verdict ────┤         │
+│         ├──── POST /permissions/check ──▶  10/10 approvals.        │
+│         │     tool: shell                  Decision: ALLOW          │
+│         │     action: execute              Decided by: auto_learned │
+│         │     scope: npm test        ◀──── Return verdict ────┤     │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
+
+Note: approve/deny are HTTP API only — not available as MCP tools.
+The UI layer (not the agent) must hold the HMAC token and call /permissions/record.
 ```
 
 ## Skip the first-session approval flood
