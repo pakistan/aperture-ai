@@ -82,6 +82,7 @@ You should see:
 AIperture — The permission layer for AI agents
 
 Commands:
+  init-claude  Set up AIperture as Claude Code's MCP permission layer
   mcp-serve    Run as MCP server (stdio transport)
   serve        Run HTTP API server
   init-db      Initialize the database
@@ -90,49 +91,36 @@ Commands:
   revoke       Revoke auto-approval for a permission pattern
 ```
 
-### 2. Initialize
-
-```bash
-aiperture init-db
-```
-
-This creates `aiperture.db` in your current directory (SQLite). That's where all permission decisions, learned patterns, and audit logs are stored.
-
-### 3. Bootstrap safe patterns (recommended)
-
-Skip the cold-start problem where every action is denied:
-
-```bash
-aiperture bootstrap developer    # 75 pre-approved patterns (git, file reads, test runners, linters)
-```
-
-This seeds the learning engine with synthetic decisions for common safe actions — `git status`, `npm test`, reading `.py`/`.ts`/`.json` files, etc. Your agent can do routine work immediately without asking you 75 times first.
-
-Other presets: `readonly` (48 patterns — reads only) or `minimal` (clean slate, learn everything from scratch).
-
-### 4. Connect your agent runtime
+### 2. Connect your agent runtime
 
 Pick whichever runtime you use:
 
-#### Claude Code
+#### Claude Code (one command)
 
-Add to your `.mcp.json` (project root or `~/.claude/`):
-
-```json
-{
-  "mcpServers": {
-    "aiperture": {
-      "type": "stdio",
-      "command": "aiperture",
-      "args": ["mcp-serve"]
-    }
-  }
-}
+```bash
+aiperture init-claude --bootstrap=developer
 ```
 
-Start Claude Code. It now has 14 AIperture tools — `check_permission`, `approve_action`, `deny_action`, `explain_action`, `get_permission_patterns`, `store_artifact`, `verify_artifact`, `get_cost_summary`, `get_audit_trail`, `get_config`, `report_tool_execution`, `get_compliance_report`, `revoke_permission_pattern`, and `list_auto_approved_patterns`.
+That's it. This creates `.mcp.json` in your project, initializes the database, and pre-seeds 75 safe patterns. Restart Claude Code and AIperture is active with 14 tools.
+
+Options:
+- `--global` — install to `~/.claude/.mcp.json` (all projects instead of just this one)
+- `--bootstrap=developer` — pre-seed 75 safe patterns (git, file reads, test runners, linters)
+- `--bootstrap=readonly` — 48 patterns (reads only)
+- No `--bootstrap` — clean slate, learn everything from scratch
 
 **[Full Claude Code guide →](docs/setup-claude-code.md)** — includes learning loop diagram, tuning, and troubleshooting.
+
+#### Other MCP runtimes (manual setup)
+
+If you're not using Claude Code, initialize the database and bootstrap manually:
+
+```bash
+aiperture init-db
+aiperture bootstrap developer    # optional: 75 pre-approved safe patterns
+```
+
+Other presets: `readonly` (48 patterns — reads only) or `minimal` (clean slate).
 
 #### OpenClaw
 
@@ -321,7 +309,7 @@ If you're a solo developer running Claude Code on personal projects, `CLAUDE.md`
 | **Circuit Breaker** | Database failures during permission checks fail closed (default deny), never crash or allow |
 | **REST API** | FastAPI server — works with any agent runtime over HTTP |
 | **MCP Server** | 14 tools for Claude Code and other MCP-compatible runtimes |
-| **CLI** | `aiperture serve`, `aiperture init-db`, `aiperture configure`, `aiperture bootstrap`, `aiperture revoke` |
+| **CLI** | `aiperture init-claude`, `aiperture serve`, `aiperture init-db`, `aiperture configure`, `aiperture bootstrap`, `aiperture revoke` |
 
 ## How decisions are made
 

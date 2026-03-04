@@ -19,17 +19,32 @@ Verify it installed:
 aiperture --help
 ```
 
-## Step 2: Initialize the database
+## Step 2: Set up AIperture for Claude Code
+
+```bash
+aiperture init-claude --bootstrap=developer
+```
+
+This does three things:
+1. Creates `.mcp.json` in your project with the AIperture MCP server config
+2. Initializes the database (`aiperture.db`)
+3. Pre-seeds 75 safe patterns (git, file reads, test runners, linters)
+
+Options:
+- `--global` — install to `~/.claude/.mcp.json` (applies to all projects)
+- `--bootstrap=readonly` — 48 read-only patterns instead of the full developer set
+- No `--bootstrap` — clean slate, learn everything from scratch
+
+If you already have a `.mcp.json`, AIperture is added alongside your existing MCP servers.
+
+<details>
+<summary>Manual setup (without init-claude)</summary>
 
 ```bash
 aiperture init-db
 ```
 
-This creates `aiperture.db` in the current directory (SQLite by default).
-
-## Step 3: Add AIperture to your MCP config
-
-Add the following to your `.mcp.json` (in your project root or `~/.claude/`):
+Add to your `.mcp.json` (project root or `~/.claude/`):
 
 ```json
 {
@@ -43,11 +58,13 @@ Add the following to your `.mcp.json` (in your project root or `~/.claude/`):
 }
 ```
 
-If you already have other MCP servers configured, add the `"aiperture"` key inside the existing `"mcpServers"` object.
+Optionally bootstrap: `aiperture bootstrap developer`
 
-## Step 4: Start using Claude Code
+</details>
 
-That's it. Restart Claude Code (or open a new session) and AIperture is active.
+## Step 3: Start using Claude Code
+
+Restart Claude Code (or open a new session) and AIperture is active.
 
 ### What to expect on first use
 
