@@ -2,6 +2,8 @@
 
 import json
 import logging
+import logging.handlers
+import re
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -233,7 +235,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AIperture",
         description="The permission layer for AI agents. Controls what passes through.",
-        version="0.11.1",
+        version="0.12.0",
         lifespan=lifespan,
         dependencies=[Depends(require_api_key)],
     )
@@ -242,11 +244,34 @@ def create_app() -> FastAPI:
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
     # Verbose request/response logging with colors
-    logging.getLogger("aiperture.requests").setLevel(logging.DEBUG)
-    if not logging.getLogger("aiperture.requests").handlers:
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        logging.getLogger("aiperture.requests").addHandler(handler)
+    req_logger = logging.getLogger("aiperture.requests")
+    req_logger.setLevel(logging.DEBUG)
+    if not req_logger.handlers:
+        # Console handler (with ANSI colors)
+        console_handler = logging.StreamHandler(sys.stderr)
+        console_handler.setFormatter(logging.Formatter("%(message)s"))
+        req_logger.addHandler(console_handler)
+
+        # File handler (strip ANSI colors, reuse root logger's file handler)
+        for h in logging.getLogger().handlers:
+            if isinstance(h, logging.handlers.RotatingFileHandler):
+
+                class _StripAnsiFormatter(logging.Formatter):
+                    _ansi_re = re.compile(r"\033\[[0-9;]*m")
+
+                    def format(self, record):
+                        msg = super().format(record)
+                        return self._ansi_re.sub("", msg)
+
+                file_handler = logging.handlers.RotatingFileHandler(
+                    h.baseFilename,
+                    maxBytes=h.maxBytes,
+                    backupCount=h.backupCount,
+                )
+                file_handler.setLevel(h.level)
+                file_handler.setFormatter(_StripAnsiFormatter("%(asctime)s [aiperture.requests] %(levelname)s %(message)s"))
+                req_logger.addHandler(file_handler)
+                break
     app.add_middleware(RequestResponseLoggingMiddleware)
 
     app.include_router(permissions.router, prefix="/permissions", tags=["permissions"])
