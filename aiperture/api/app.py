@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI
 
 from aiperture import plugins
 from aiperture.api.auth import require_api_key
-from aiperture.api.routes import artifacts, audit, config, health, intelligence, metrics, permissions
+from aiperture.api.routes import artifacts, audit, config, health, hooks, intelligence, metrics, permissions
 from aiperture.db import init_db
 
 
@@ -22,7 +22,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AIperture",
         description="The permission layer for AI agents. Controls what passes through.",
-        version="0.6.0",
+        version="0.7.0",
         lifespan=lifespan,
         dependencies=[Depends(require_api_key)],
     )
@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(audit.router, prefix="/audit", tags=["audit"])
     app.include_router(intelligence.router, prefix="/intelligence", tags=["intelligence"])
     app.include_router(config.router, prefix="/config", tags=["config"])
+    app.include_router(hooks.router, prefix="/hooks", tags=["hooks"])
     app.include_router(health.router, tags=["health"])
     app.include_router(metrics.router, tags=["metrics"])
 

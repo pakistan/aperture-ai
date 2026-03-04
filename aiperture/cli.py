@@ -128,6 +128,35 @@ def _setup_claude(args: list[str]):
         mcp_path.write_text(json.dumps(config, indent=2) + "\n")
         print(f"Added AIperture to {mcp_path}")  # noqa: T201
 
+    # Add mcp__aiperture__* to Claude Code's permission allow list
+    if global_mode:
+        settings_path = Path.home() / ".claude" / "settings.json"
+    else:
+        settings_dir = Path(".claude")
+        settings_dir.mkdir(exist_ok=True)
+        settings_path = settings_dir / "settings.json"
+
+    mcp_allow_rule = "mcp__aiperture__*"
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            settings = {}
+    else:
+        settings = {}
+
+    permissions = settings.setdefault("permissions", {})
+    allow_list = permissions.setdefault("allow", [])
+    if mcp_allow_rule not in allow_list:
+        allow_list.append(mcp_allow_rule)
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+        print(f"Added {mcp_allow_rule} to {settings_path}")  # noqa: T201
+    else:
+        print(f"{mcp_allow_rule} already in {settings_path}")  # noqa: T201
+
+    # Write hooks config to settings.json for Claude Code hook integration
+    _write_hooks_config(settings, settings_path)
+
     # Initialize database
     init_db()
     print("Database initialized.")  # noqa: T201
@@ -144,9 +173,50 @@ def _setup_claude(args: list[str]):
             sys.exit(1)
 
     print()  # noqa: T201
-    print("Done! Restart Claude Code to activate AIperture.")  # noqa: T201
+    print("Done! Run `aiperture serve` before starting Claude Code for auto-learning.")  # noqa: T201
     if not bootstrap_preset:
         print("Tip: run 'aiperture setup-claude --bootstrap=developer' to pre-seed 75 safe patterns.")  # noqa: T201
+
+
+def _write_hooks_config(settings: dict, settings_path) -> None:
+    """Write Claude Code hook entries to settings.json.
+
+    Merges with any existing hooks — does not overwrite.
+    """
+    import json
+
+    aiperture_hooks = {
+        "PermissionRequest": [{
+            "matcher": "^(?!mcp__aiperture__).*",
+            "hooks": [{"type": "http", "url": "http://localhost:8100/hooks/permission-request"}],
+        }],
+        "PostToolUse": [{
+            "matcher": "^(?!mcp__aiperture__).*",
+            "hooks": [{"type": "http", "url": "http://localhost:8100/hooks/post-tool-use"}],
+        }],
+    }
+
+    existing_hooks = settings.get("hooks", {})
+    added = False
+
+    for event_name, new_entries in aiperture_hooks.items():
+        event_hooks = existing_hooks.get(event_name, [])
+        # Check if AIperture hook is already registered
+        already_registered = any(
+            any("aiperture" in h.get("url", "") for h in entry.get("hooks", []))
+            for entry in event_hooks
+        )
+        if not already_registered:
+            event_hooks.extend(new_entries)
+            added = True
+        existing_hooks[event_name] = event_hooks
+
+    settings["hooks"] = existing_hooks
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    if added:
+        print(f"Added Claude Code hooks to {settings_path}")  # noqa: T201
+    else:
+        print(f"Claude Code hooks already in {settings_path}")  # noqa: T201
 
 
 def _remove_claude(args: list[str]):
@@ -195,6 +265,44 @@ def _remove_claude(args: list[str]):
     else:
         mcp_path.write_text(json.dumps(config, indent=2) + "\n")
         print(f"Removed AIperture from {mcp_path}")  # noqa: T201
+
+    # Remove mcp__aiperture__* from Claude Code's permission allow list + hooks
+    if global_mode:
+        settings_path = Path.home() / ".claude" / "settings.json"
+    else:
+        settings_path = Path(".claude") / "settings.json"
+
+    mcp_allow_rule = "mcp__aiperture__*"
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+            allow_list = settings.get("permissions", {}).get("allow", [])
+            if mcp_allow_rule in allow_list:
+                allow_list.remove(mcp_allow_rule)
+                print(f"Removed {mcp_allow_rule} from {settings_path}")  # noqa: T201
+
+            # Remove AIperture hook entries
+            hooks = settings.get("hooks", {})
+            hooks_removed = False
+            for event_name in ("PermissionRequest", "PostToolUse"):
+                if event_name in hooks:
+                    original_len = len(hooks[event_name])
+                    hooks[event_name] = [
+                        entry for entry in hooks[event_name]
+                        if not any("aiperture" in h.get("url", "") for h in entry.get("hooks", []))
+                    ]
+                    if len(hooks[event_name]) < original_len:
+                        hooks_removed = True
+                    if not hooks[event_name]:
+                        del hooks[event_name]
+            if not hooks:
+                settings.pop("hooks", None)
+            if hooks_removed:
+                print(f"Removed AIperture hooks from {settings_path}")  # noqa: T201
+
+            settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+        except (json.JSONDecodeError, OSError):
+            pass  # best-effort cleanup
 
     print("Your database and learned patterns are preserved.")  # noqa: T201
     print("Run 'aiperture setup-claude' to reconnect anytime.")  # noqa: T201

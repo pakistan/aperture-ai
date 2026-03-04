@@ -386,6 +386,58 @@ class PermissionEngine:
             organization_id=organization_id, runtime_id=runtime_id,
         )
 
+    def record_hook_decision(
+        self,
+        tool: str,
+        action: str,
+        scope: str,
+        decision: PermissionDecision,
+        *,
+        session_id: str = "",
+        organization_id: str = "default",
+        runtime_id: str = "",
+    ) -> PermissionLog:
+        """Record a permission decision from Claude Code's hook integration.
+
+        Unlike record_human_decision, this does NOT require an HMAC challenge
+        token. Claude Code's own permission dialog is the human verification
+        gate — if PostToolUse fires, the user approved.
+
+        Records with decided_by="human:claude-code-hook" so the learning
+        engine picks up the "human:" prefix and includes it in pattern
+        detection.
+        """
+        # Rubber-stamping detection
+        effective_decided_by = "human:claude-code-hook"
+        if decision == PermissionDecision.ALLOW and session_id:
+            effective_decided_by = self._check_rapid_approval(
+                session_id, tool, action, "claude-code-hook",
+            )
+
+        # Cache in session memory
+        if session_id:
+            cache_key = (organization_id, tool, action, scope, session_id, "")
+            self._session_cache.set(cache_key, decision)
+
+        # Also record with normalized scope to accelerate learning
+        from aiperture.permissions.scope_normalize import normalize_scope
+
+        normalized = normalize_scope(tool, action, scope)
+        if normalized and normalized != scope:
+            norm_cache_key = (organization_id, tool, action, normalized, session_id, "")
+            self._session_cache.set(norm_cache_key, decision)
+            self._log(
+                tool, action, normalized, decision, effective_decided_by,
+                session_id=session_id,
+                organization_id=organization_id, runtime_id=runtime_id,
+            )
+
+        return self._log(
+            tool, action, scope, decision, effective_decided_by,
+            session_id=session_id,
+            organization_id=organization_id, runtime_id=runtime_id,
+        )
+
     def revoke_pattern(
         self,
         tool: str,

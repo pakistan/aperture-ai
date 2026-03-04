@@ -25,10 +25,11 @@ aiperture --help
 aiperture setup-claude --bootstrap=developer
 ```
 
-This does three things:
+This does four things:
 1. Creates `.mcp.json` in your project with the AIperture MCP server config
-2. Initializes the database (`aiperture.db`)
-3. Pre-seeds 75 safe patterns (git, file reads, test runners, linters)
+2. Adds Claude Code hooks to `.claude/settings.json` (PermissionRequest + PostToolUse)
+3. Initializes the database (`aiperture.db`)
+4. Pre-seeds 75 safe patterns (git, file reads, test runners, linters)
 
 Options:
 - `--global` — install to `~/.claude/.mcp.json` (applies to all projects)
@@ -62,23 +63,48 @@ Optionally bootstrap: `aiperture bootstrap developer`
 
 </details>
 
-## Step 3: Start using Claude Code
+## Step 3: Start the AIperture server
 
-Restart Claude Code (or open a new session) and AIperture is active.
+The hooks need the AIperture HTTP server running to function:
+
+```bash
+aiperture serve
+```
+
+Leave this running in a terminal. If the server is not running, Claude Code falls back to its normal permission prompts (fail-open).
+
+## Step 4: Start using Claude Code
+
+Restart Claude Code (or open a new session) and AIperture is active. Two integration paths work simultaneously:
+
+### Hook integration (recommended, zero-friction)
+
+AIperture hooks into Claude Code's native permission flow via HTTP hooks. No double-prompting — it works silently:
+
+1. **Claude wants to run a tool** — e.g., `Bash("npm test")`
+2. **PermissionRequest hook fires** — AIperture checks if it has a learned ALLOW pattern
+3. **If learned: auto-approved** — The permission dialog never appears. Tool runs immediately.
+4. **If not learned: normal prompt** — You see Claude Code's standard "Allow?" dialog
+5. **PostToolUse hook fires** — Records your approval for learning
+6. **After enough approvals** — AIperture starts auto-approving via step 3
+
+### MCP integration (for other runtimes)
+
+AIperture also runs as an MCP server with 14 tools. This path is used by non-Claude runtimes (OpenAI Agents SDK, LangChain, etc.) and provides explicit check/approve/deny calls with HMAC challenge-response.
 
 ### What to expect on first use
 
 When you start your first Claude Code session with AIperture:
 
-1. **Claude sees the 14 AIperture tools** — it can call `check_permission`, `approve_action`, `deny_action`, `explain_action`, `get_permission_patterns`, `store_artifact`, `verify_artifact`, `get_cost_summary`, `get_audit_trail`, `get_config`, `report_tool_execution`, `get_compliance_report`, `revoke_permission_pattern`, and `list_auto_approved_patterns`.
+1. **AIperture hooks are active** — PermissionRequest and PostToolUse events are sent to AIperture's HTTP endpoints before and after each tool call.
 
-2. **Everything starts as denied** — AIperture has no history yet, so the first time Claude tries to read a file or run a command, it will be denied. Claude will ask you to approve it.
+2. **Everything starts as "ask"** — AIperture has no history yet, so it returns no opinion and Claude Code shows its normal permission prompts.
 
-3. **You approve the safe stuff** — When Claude says "AIperture denied this, want to approve?", say yes for things like `git status`, `cat README.md`, `npm test`. Say no for anything you wouldn't want an agent doing unsupervised.
+3. **You approve the safe stuff** — When Claude Code shows "Allow?", say yes for things like `git status`, `cat README.md`, `npm test`. Say no for anything you wouldn't want an agent doing unsupervised.
 
-4. **AIperture learns your preferences** — After 10 consistent approvals of the same action type (e.g., `filesystem.read`), AIperture auto-approves it going forward. You stop getting asked.
+4. **AIperture learns your preferences** — After 10 consistent approvals of the same action type (e.g., `filesystem.read`), AIperture auto-approves it going forward. The permission prompt stops appearing.
 
-5. **Dangerous actions stay flagged** — `rm -rf`, shell commands with broad wildcards, anything touching system paths — these are scored as HIGH/CRITICAL risk and always require your explicit approval.
+5. **Dangerous actions stay flagged** — `rm -rf`, shell commands with broad wildcards, anything touching system paths — these are scored as HIGH/CRITICAL risk and always require your explicit approval, even with a learned pattern.
 
 This is what it looks like in practice:
 
@@ -101,51 +127,86 @@ This is what it looks like in practice:
 
 ## AIperture vs Claude Code's built-in permissions
 
-Claude Code has its own permission system — the "Allow once / Allow for session / Always allow / Deny" popup. That's separate from AIperture. Here's how they relate:
+Claude Code has its own permission system — the "Allow once / Allow for session / Always allow / Deny" popup. With hooks, AIperture integrates directly into this flow:
 
-| | Claude Code built-in | AIperture |
+| | Claude Code built-in | AIperture (hooks) |
 |---|---|---|
 | **What it controls** | Whether Claude can call a tool at all | Whether the *action* (read this file, run this command) is allowed |
 | **Persistence** | Per-session or permanent per-machine | Per-database, shared across sessions, learns over time |
 | **Learning** | No — same prompts every new session | Yes — auto-approves after enough consistent human decisions |
-| **Audit trail** | No | Yes — every decision logged |
+| **Audit trail** | No | Yes — every decision logged with hash-chained integrity |
 | **Risk scoring** | No | Yes — LOW/MEDIUM/HIGH/CRITICAL per action |
+| **User experience** | Prompt appears every time | Prompt disappears after AIperture learns the pattern |
 
-In practice, you'll likely set Claude Code's built-in permissions to "Always allow" for AIperture's MCP tools (since AIperture itself is the permission layer). Then all permission decisions flow through AIperture, which learns and persists them.
+With hooks, AIperture works *within* Claude Code's permission flow — not alongside it. The PermissionRequest hook auto-approves learned patterns before the prompt appears, so you never see it. For unknown patterns, Claude Code shows its normal prompt and AIperture learns from your decision.
 
 **Important:** AIperture only checks permissions for tool calls that access external resources (files, shell, APIs). It does NOT interfere with Claude asking you questions, presenting options, or having a normal conversation. Those happen without involving AIperture at all.
 
 ## How the learning loop works
 
+### Hook-based flow (recommended)
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                                                                     │
-│  Claude Code                     AIperture                           │
-│  ───────────                     ────────                           │
+│  Claude Code                     AIperture Server                    │
+│  ───────────                     ───────────────                    │
+│                                                                     │
+│  Claude wants to run "npm test"                                     │
+│         │                                                           │
+│         ├── PermissionRequest ────▶  No history. Return {}          │
+│         │   hook fires                (no opinion)                  │
+│         │                       ◀────────────────────────┤          │
+│         │                                                           │
+│  User sees normal Claude Code prompt: "Allow npm test?"             │
+│         │                                                           │
+│  User:  "Yes, allow"                                                │
+│         │                                                           │
+│  Tool executes successfully                                         │
+│         │                                                           │
+│         ├── PostToolUse ──────────▶  Recorded approval. (1 of 10)   │
+│         │   hook fires                                              │
+│         │                                                           │
+│         │     ... 9 more approvals over time ...                    │
+│         │                                                           │
+│         ├── PermissionRequest ────▶  10/10 approvals at 100%.       │
+│         │   hook fires                Return auto-approve.          │
+│         │                       ◀────────────────────────┤          │
+│         │                                                           │
+│  Permission dialog NEVER appears.                                   │
+│  Tool runs immediately.                                             │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### MCP-based flow (for other runtimes)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                                                                     │
+│  AI Agent                        AIperture (MCP)                     │
+│  ────────                        ──────────────                     │
 │                                                                     │
 │  "I need to run npm test"                                           │
 │         │                                                           │
 │         ├──── check_permission ────▶  No history for this action.   │
-│         │     tool: shell              Decision: DENY               │
-│         │     action: execute                                       │
+│         │     tool: shell              Decision: ASK                │
+│         │     action: execute          + HMAC challenge             │
 │         │     scope: npm test    ◀──── Return verdict ────┤         │
 │         │                                                           │
-│  "Permission denied. Approve?"                                      │
+│  "Permission needed. Approve?"                                      │
 │         │                                                           │
 │  User:  "Yes"                                                       │
 │         │                                                           │
 │         ├──── approve_action ─────▶  Recorded. (1 of 10 needed)     │
+│         │     + challenge token        (HMAC verified)              │
 │         │                                                           │
 │         │     ... 9 more approvals over time ...                    │
 │         │                                                           │
 │         ├──── check_permission ────▶  10/10 approvals at 100%.      │
 │         │     tool: shell              Decision: ALLOW              │
 │         │     action: execute          Decided by: auto_learned     │
-│         │     scope: npm test                                       │
-│         │                        ◀──── Return verdict ────┤         │
-│         │                                                           │
-│  "AIperture auto-approved npm test                                   │
-│   based on your previous decisions."                                │
+│         │     scope: npm test    ◀──── Return verdict ────┤         │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -219,16 +280,16 @@ AIperture includes several security hardening features that are active out of th
 - **Hash-chained audit trail** — Every audit event is cryptographically chained for tamper detection
 - **HMAC nonce persistence** — Challenge nonces survive server restarts, preventing replay attacks
 
-## Running the API server alongside MCP
+## Running the API server
 
-The MCP server (stdio) and REST API server can run at the same time. This is useful if you want to query the audit trail or permission patterns from a browser or script while Claude Code is running:
+The API server is **required** for hook-based integration. It handles the PermissionRequest and PostToolUse HTTP hooks from Claude Code:
 
 ```bash
-# In one terminal — API server for querying
+# Start the API server (required for hooks)
 aiperture serve
-
-# Claude Code uses MCP (stdio) — no extra terminal needed
 ```
+
+The MCP server (stdio) runs separately inside Claude Code. Both can run at the same time — the API server handles hooks and REST queries, while MCP handles the 14 AIperture tools.
 
 Query examples:
 
@@ -290,6 +351,34 @@ tail -f ~/.aiperture/aiperture.log
 
 Logs rotate automatically at 5 MB with 3 backups.
 
+## Hook configuration details
+
+`aiperture setup-claude` writes the following hooks to `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PermissionRequest": [{
+      "matcher": "^(?!mcp__aiperture__).*",
+      "hooks": [{"type": "http", "url": "http://localhost:8100/hooks/permission-request"}]
+    }],
+    "PostToolUse": [{
+      "matcher": "^(?!mcp__aiperture__).*",
+      "hooks": [{"type": "http", "url": "http://localhost:8100/hooks/post-tool-use"}]
+    }]
+  }
+}
+```
+
+Key details:
+- The `matcher` regex excludes AIperture's own MCP tools (`mcp__aiperture__*`) to prevent recursive loops
+- **PermissionRequest** fires when Claude Code is about to show a permission dialog. AIperture can auto-approve or auto-deny based on learned patterns.
+- **PostToolUse** fires after a tool executes successfully. AIperture records this as an implicit approval for learning.
+- If the server is down, the HTTP hooks fail with a non-2xx response, and Claude Code falls back to its normal permission prompts (fail-open)
+- HIGH/CRITICAL risk actions are never auto-approved via hooks, even with a learned pattern
+
+To remove hooks: `aiperture remove-claude` cleans up both MCP config and hook entries.
+
 ## Troubleshooting
 
 **"aiperture: command not found"**
@@ -300,6 +389,16 @@ which aiperture   # Should print a path
 ```
 
 If you're using a virtual environment, make sure it's activated. If you installed globally, make sure your Python scripts directory is on your PATH.
+
+**Hooks aren't working (still seeing every permission prompt)**
+
+Make sure the API server is running: `aiperture serve`. Check that hooks are in `.claude/settings.json`:
+
+```bash
+cat .claude/settings.json | jq .hooks
+```
+
+If missing, re-run `aiperture setup-claude`. Also check the server logs for incoming hook requests.
 
 **Permissions aren't being learned**
 

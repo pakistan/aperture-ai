@@ -57,7 +57,7 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "DEBUG"  # DEBUG, INFO, WARNING, ERROR
-    log_file: str = ""  # Path to log file (e.g. ~/.aiperture/aiperture.log)
+    log_file: str = "~/.aiperture/aiperture.log"  # Path to log file (RotatingFileHandler, 5 MB, 3 backups)
 
     # API
     api_host: str = "0.0.0.0"

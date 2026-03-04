@@ -43,6 +43,7 @@ aiperture/
 │   │       ├── audit.py          # /audit/* endpoints + /audit/verify-chain (hash chain integrity)
 │   │       ├── config.py         # /config endpoints (GET + PATCH runtime tuning)
 │   │       ├── health.py         # /health endpoint (DB + plugin health checkers)
+│   │       ├── hooks.py          # /hooks/* endpoints (Claude Code hook integration)
 │   │       ├── intelligence.py   # /intelligence/* endpoints
 │   │       └── metrics.py        # /metrics endpoint (Prometheus format)
 │   ├── db/                  # Database engine (SQLite/Postgres) + plugin db_engine
@@ -52,8 +53,11 @@ aiperture/
 │   │   ├── audit.py         # AuditEvent (append-only, hash-chained)
 │   │   ├── intelligence.py  # GlobalPermissionStat (cross-org DP stats)
 │   │   └── verdict.py       # PermissionVerdict, RiskAssessment, OrgSignal, etc.
+│   ├── hooks/               # Claude Code hook integration
+│   │   ├── tool_mapping.py  # Map Claude Code tools to (tool, action, scope) triples
+│   │   └── pending_tracker.py # Track pending requests for denial inference
 │   ├── permissions/         # Permission engine + learning + intelligence
-│   │   ├── engine.py        # RBAC + ReBAC + auto-learning + rate limiting + risk budget + rubber-stamping + temporal decay + metrics
+│   │   ├── engine.py        # RBAC + ReBAC + auto-learning + rate limiting + risk budget + rubber-stamping + temporal decay + hooks + metrics
 │   │   ├── learning.py      # Pattern detection from decision history
 │   │   ├── intelligence.py  # Cross-org DP intelligence + plugin intelligence_backend
 │   │   ├── risk.py          # OWASP-based risk classification + plugin risk_rules
@@ -121,6 +125,10 @@ aiperture/
 ### Intelligence (`/intelligence`)
 - `GET /intelligence/global-signal` — Cross-org DP-protected permission signal
 
+### Hooks (`/hooks`)
+- `POST /hooks/permission-request` — Claude Code PermissionRequest hook handler (auto-approve/deny learned patterns)
+- `POST /hooks/post-tool-use` — Claude Code PostToolUse hook handler (records implicit approvals for learning)
+
 ### Metrics (`/metrics`)
 - `GET /metrics` — Prometheus-compatible metrics (counters, histograms, gauges)
 
@@ -169,7 +177,8 @@ aiperture/
 15. **Rubber-stamping detection** — Tracks approval velocity per `(session_id, tool, action)`. If 5+ approvals within 60s (configurable), flags with `:rapid` suffix. Rapid decisions are excluded from learning engine calculations.
 16. **HMAC nonce persistence** — `ConsumedNonce` SQLModel table persists used nonces to database. In-memory cache as first-level check, DB as fallback. Closes replay attack window across server restarts.
 17. **Hash-chained audit trail** — Each `AuditEvent` stores `previous_hash` and `event_hash` (SHA-256). `GET /audit/verify-chain` walks the chain to detect tampering, deletions, or reordering. SOC 2 compliant.
-18. **Prometheus metrics** — `GET /metrics` endpoint exposes `aiperture_permission_checks_total`, `aiperture_permission_check_duration_seconds`, cache hit/miss counters, auto-approve/deny counters, rate limit counters, risk budget exhaustion counters, and audit metrics.
+18. **Prometheus metrics** — `GET /metrics` endpoint exposes `aiperture_permission_checks_total`, `aiperture_permission_check_duration_seconds`, cache hit/miss counters, auto-approve/deny counters, rate limit counters, risk budget exhaustion counters, hook metrics, and audit metrics.
+19. **Claude Code hook integration** — `PermissionRequest` and `PostToolUse` hooks learn from Claude Code's native permission flow. No HMAC required (Claude Code's own permission dialog is the human gate). HIGH/CRITICAL risk actions are never auto-approved via hooks. Auto-approved actions are tracked to prevent double-counting in PostToolUse. Fail-open: if AIperture server is down, hooks return non-2xx and Claude Code shows normal prompts.
 
 ## Architecture Rules
 

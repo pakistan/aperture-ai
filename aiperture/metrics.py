@@ -72,6 +72,24 @@ LEARNED_PATTERNS = Gauge(
 )
 
 
+# Hook metrics
+HOOK_PERMISSION_REQUESTS = Counter(
+    "aiperture_hook_permission_requests_total",
+    "Hook permission requests processed",
+    ["decision"],
+)
+
+HOOK_POST_TOOL_USE = Counter(
+    "aiperture_hook_post_tool_use_total",
+    "Hook post-tool-use events recorded",
+)
+
+HOOK_INFERRED_DENIALS = Counter(
+    "aiperture_hook_inferred_denials_total",
+    "Denials inferred from timed-out pending requests",
+)
+
+
 @contextmanager
 def track_check_duration():
     """Context manager to track permission check duration."""
