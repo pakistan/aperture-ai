@@ -41,18 +41,20 @@ aiperture/
 │   │   └── routes/
 │   │       ├── permissions.py    # /permissions/* endpoints
 │   │       ├── artifacts.py      # /artifacts/* endpoints
-│   │       ├── audit.py          # /audit/* endpoints
+│   │       ├── audit.py          # /audit/* endpoints + /audit/verify-chain (hash chain integrity)
+│   │       ├── config.py         # /config endpoints (GET + PATCH runtime tuning)
 │   │       ├── health.py         # /health endpoint (DB + plugin health checkers)
-│   │       └── intelligence.py   # /intelligence/* endpoints
+│   │       ├── intelligence.py   # /intelligence/* endpoints
+│   │       └── metrics.py        # /metrics endpoint (Prometheus format)
 │   ├── db/                  # Database engine (SQLite/Postgres) + plugin db_engine
 │   ├── models/              # SQLModel table definitions + dataclasses
-│   │   ├── permission.py    # Permission, PermissionLog, TaskPermission
+│   │   ├── permission.py    # Permission, PermissionLog, TaskPermission, ConsumedNonce
 │   │   ├── artifact.py      # Artifact with SHA-256 hashing
-│   │   ├── audit.py         # AuditEvent (append-only)
+│   │   ├── audit.py         # AuditEvent (append-only, hash-chained)
 │   │   ├── intelligence.py  # GlobalPermissionStat (cross-org DP stats)
 │   │   └── verdict.py       # PermissionVerdict, RiskAssessment, OrgSignal, etc.
 │   ├── permissions/         # Permission engine + learning + intelligence
-│   │   ├── engine.py        # RBAC + ReBAC + auto-learning + plugin session_cache
+│   │   ├── engine.py        # RBAC + ReBAC + auto-learning + rate limiting + risk budget + rubber-stamping + temporal decay + metrics
 │   │   ├── learning.py      # Pattern detection from decision history
 │   │   ├── intelligence.py  # Cross-org DP intelligence + plugin intelligence_backend
 │   │   ├── risk.py          # OWASP-based risk classification + plugin risk_rules
@@ -60,12 +62,13 @@ aiperture/
 │   │   ├── similarity.py    # Taxonomy-based pattern similarity
 │   │   ├── explainer.py     # Human-readable action explanations
 │   │   ├── resource.py      # Scope → resource normalization
-│   │   ├── challenge.py     # HMAC challenge-response for human verification
+│   │   ├── challenge.py     # HMAC challenge-response + DB-persisted nonce replay protection
 │   │   ├── presets.py       # Bootstrap presets (developer, readonly, minimal)
 │   │   └── scope_normalize.py # Scope normalization for learning
 │   ├── stores/              # Persistence layer
 │   │   ├── artifact_store.py
-│   │   └── audit_store.py   # + plugin audit_hook
+│   │   └── audit_store.py   # Hash-chained writes + verify_chain() + plugin audit_hook
+│   ├── metrics.py           # Prometheus counters, histograms, gauges for observability
 │   ├── plugins.py           # Plugin registry + Protocol definitions (open-core)
 │   ├── config.py            # Settings via AIPERTURE_* env vars + plugin config
 │   ├── cli.py               # CLI entry point (serve | mcp-serve | init-db | configure | bootstrap | revoke)
@@ -108,6 +111,7 @@ aiperture/
 - `GET /audit/events/{id}` — Single event detail
 - `GET /audit/entity/{type}/{id}` — Entity history
 - `GET /audit/count` — Total event count
+- `GET /audit/verify-chain` — Verify hash chain integrity (tamper detection)
 
 ### Config (`/config`)
 - `GET /config` — Current tunable settings and descriptions
@@ -115,6 +119,9 @@ aiperture/
 
 ### Intelligence (`/intelligence`)
 - `GET /intelligence/global-signal` — Cross-org DP-protected permission signal
+
+### Metrics (`/metrics`)
+- `GET /metrics` — Prometheus-compatible metrics (counters, histograms, gauges)
 
 ## MCP Tools
 
@@ -154,6 +161,14 @@ aiperture/
 8. **Content awareness** — `content_hash` parameter in `check_permission` differentiates writes by content. Session cache key is a 5-tuple: `(tool, action, scope, session_id, content_hash)`.
 9. **Scope normalization** — `scope_normalize.py` groups command variants (e.g., `git log --oneline -5` → `git log*`) for faster learning.
 10. **Revocation** — `engine.revoke_pattern()` soft-deletes decisions via `revoked_at` timestamp. Excluded from learning, crowd signals, and pattern detection. Preserved for audit.
+11. **Rate limiting** — Per-session rate limiter (`AIPERTURE_RATE_LIMIT_PER_MINUTE`, default 200). In-memory counter with 1-minute sliding window. Exceeding returns DENY with `rate_limit_exceeded` factor. Prevents DoS and permission enumeration.
+12. **Cumulative session risk scoring** — Tracks cumulative risk per session (`AIPERTURE_SESSION_RISK_BUDGET`, default 50.0). When exhausted, all subsequent checks escalate to ASK regardless of learned patterns. Prevents "death by a thousand cuts" data exfiltration.
+13. **Sensitive path protection** — `AIPERTURE_SENSITIVE_PATTERNS` (configurable glob list) skips scope normalization for sensitive files (secrets, credentials, keys, .env). Requires exact-match learning instead of wildcard patterns.
+14. **Temporal pattern decay** — `AIPERTURE_PATTERN_MAX_AGE_DAYS` (default 90). Auto-learned patterns expire if the most recent human decision is older than the configured age. Forces periodic re-confirmation.
+15. **Rubber-stamping detection** — Tracks approval velocity per `(session_id, tool, action)`. If 5+ approvals within 60s (configurable), flags with `:rapid` suffix. Rapid decisions are excluded from learning engine calculations.
+16. **HMAC nonce persistence** — `ConsumedNonce` SQLModel table persists used nonces to database. In-memory cache as first-level check, DB as fallback. Closes replay attack window across server restarts.
+17. **Hash-chained audit trail** — Each `AuditEvent` stores `previous_hash` and `event_hash` (SHA-256). `GET /audit/verify-chain` walks the chain to detect tampering, deletions, or reordering. SOC 2 compliant.
+18. **Prometheus metrics** — `GET /metrics` endpoint exposes `aiperture_permission_checks_total`, `aiperture_permission_check_duration_seconds`, cache hit/miss counters, auto-approve/deny counters, rate limit counters, risk budget exhaustion counters, and audit metrics.
 
 ## Architecture Rules
 
@@ -187,6 +202,12 @@ Run `aiperture configure` for an interactive setup wizard, or use `PATCH /config
 | `AIPERTURE_INTELLIGENCE_ENABLED` | `false` | Yes | Enable cross-org DP intelligence (opt-in) |
 | `AIPERTURE_INTELLIGENCE_EPSILON` | `1.0` | Yes | DP noise level (higher = less private) |
 | `AIPERTURE_INTELLIGENCE_MIN_ORGS` | `5` | Yes | Min orgs before surfacing global signal |
+| `AIPERTURE_SENSITIVE_PATTERNS` | `*secret*,*credential*,...` | Yes | Comma-separated glob patterns for sensitive files (skip scope normalization) |
+| `AIPERTURE_PATTERN_MAX_AGE_DAYS` | `90` | Yes | Days before auto-learned patterns expire without human reconfirmation |
+| `AIPERTURE_RAPID_APPROVAL_WINDOW_SECONDS` | `60` | Yes | Time window for rubber-stamping detection |
+| `AIPERTURE_RAPID_APPROVAL_MIN_COUNT` | `5` | Yes | Min approvals within window to flag as rubber-stamping |
+| `AIPERTURE_RATE_LIMIT_PER_MINUTE` | `200` | Yes | Max permission checks per session per minute (0 = unlimited) |
+| `AIPERTURE_SESSION_RISK_BUDGET` | `50.0` | Yes | Cumulative risk budget per session before escalating to ASK |
 | `AIPERTURE_ARTIFACT_STORAGE_DIR` | `` | No | Artifact file storage directory |
 | `AIPERTURE_API_KEY` | `` | No | Bearer token for HTTP API auth (empty = open access) |
 | `AIPERTURE_API_HOST` | `0.0.0.0` | No | API server bind host |

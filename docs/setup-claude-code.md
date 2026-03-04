@@ -190,6 +190,18 @@ AIPERTURE_AUTO_APPROVE_THRESHOLD=0.90           # Lower approval rate required
 aiperture configure
 ```
 
+## Security features active by default
+
+AIperture includes several security hardening features that are active out of the box:
+
+- **Rate limiting** — 200 permission checks/minute per session (configurable via `AIPERTURE_RATE_LIMIT_PER_MINUTE`)
+- **Session risk scoring** — Cumulative risk budget of 50.0 per session. Many individually-safe actions that compound are escalated to ASK. (configurable via `AIPERTURE_SESSION_RISK_BUDGET`)
+- **Sensitive path protection** — Files matching patterns like `*secret*`, `*.env`, `*.pem`, `*.key` skip scope normalization and require exact-match learning
+- **Temporal decay** — Auto-learned patterns expire after 90 days without human reconfirmation (configurable via `AIPERTURE_PATTERN_MAX_AGE_DAYS`)
+- **Rubber-stamping detection** — Rapid approvals (5+ within 60s) are excluded from the learning engine
+- **Hash-chained audit trail** — Every audit event is cryptographically chained for tamper detection
+- **HMAC nonce persistence** — Challenge nonces survive server restarts, preventing replay attacks
+
 ## Running the API server alongside MCP
 
 The MCP server (stdio) and REST API server can run at the same time. This is useful if you want to query the audit trail or permission patterns from a browser or script while Claude Code is running:
@@ -212,6 +224,12 @@ curl localhost:8100/permissions/patterns?min_decisions=5
 
 # Full audit trail
 curl localhost:8100/audit/events?limit=50
+
+# Verify audit trail integrity (hash chain)
+curl localhost:8100/audit/verify-chain
+
+# Prometheus metrics (for monitoring dashboards)
+curl localhost:8100/metrics
 
 # Current config
 curl localhost:8100/config

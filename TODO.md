@@ -135,186 +135,85 @@ Individual column indexes exist on `organization_id`, `task_id`, etc., but there
 
 ---
 
-## HIGH PRIORITY — Security Hardening
+## HIGH PRIORITY — Security Hardening (ALL COMPLETE)
 
-### 6. Add Rate Limiting
+### 6. ~~Add Rate Limiting~~ DONE
 
-**Priority**: High
-**Files**: `aiperture/permissions/engine.py`, `aiperture/api/routes/permissions.py`, `aiperture/mcp_server.py`
+**Status**: Completed (March 2026). Per-session rate limiter in `PermissionEngine.check()` with in-memory counter and 1-minute sliding window. Configurable via `AIPERTURE_RATE_LIMIT_PER_MINUTE` (default 200). Returns DENY verdict with `rate_limit_exceeded` factor. 5 tests in `tests/test_rate_limiting.py`.
+
+~~**Priority**: High~~
+**Files**: `aiperture/permissions/engine.py`, `aiperture/config.py`
 **Effort**: Medium
-
-**Problem**: No limit on permission checks per session or per org. A runaway or compromised agent could issue 10,000+ checks/minute, causing:
-- DoS on the permission engine
-- Database write amplification (every check is logged)
-- Permission enumeration (probing what's allowed)
-
-**What to do**:
-- Add a per-session rate limiter in `PermissionEngine.check()`
-- Track check count per `(session_id, organization_id)` in a lightweight counter (in-memory dict with TTL)
-- Default limit: 200 checks/minute per session (configurable via `AIPERTURE_RATE_LIMIT_PER_MINUTE`)
-- When exceeded: return a DENY verdict with `reason: "rate_limit_exceeded"`
-- Log a WARNING with the session details
-- Add the rate limit info to the `/health` or `/permissions/stats` endpoint
-
-**Why it matters**: Without rate limiting, a single compromised agent can enumerate permissions and DoS the system.
 
 ---
 
-### 7. Add Cumulative Session Risk Scoring
+### 7. ~~Add Cumulative Session Risk Scoring~~ DONE
 
-**Priority**: High
-**Files**: `aiperture/permissions/engine.py`
+**Status**: Completed (March 2026). `_session_risk_budget` dict tracks cumulative risk per session. Risk score mapping: LOW=0.1, MEDIUM=0.3, HIGH=0.7, CRITICAL=1.0. Configurable via `AIPERTURE_SESSION_RISK_BUDGET` (default 50.0). Exhausted budget escalates ALLOW → ASK. 6 tests in `tests/test_session_risk.py`.
+
+~~**Priority**: High~~
+**Files**: `aiperture/permissions/engine.py`, `aiperture/config.py`
 **Effort**: Medium
-
-**Problem**: Aperture evaluates each action independently. An agent reading 1,000 files individually (each LOW risk) is never flagged, but collectively this could be data exfiltration. This is the biggest zero-trust gap.
-
-**What to do**:
-- Add a `_session_risk_budget` dict in `PermissionEngine`: `dict[str, float]` mapping `session_id` → cumulative risk score
-- In `check()`, after computing risk via `classify_risk()`, add the numeric risk score to the session's budget
-- Risk score mapping: LOW=0.1, MEDIUM=0.3, HIGH=0.7, CRITICAL=1.0
-- Add `AIPERTURE_SESSION_RISK_BUDGET` config (default 50.0)
-- When budget exhausted: escalate all subsequent checks to ASK regardless of learned patterns
-- Include `remaining_risk_budget` in the verdict enrichment
-- Reset budget when session ends (or after a configurable cooldown)
-
-**Why it matters**: This prevents "death by a thousand cuts" attacks where many individually-safe actions compound into a dangerous pattern.
 
 ---
 
-### 8. Add Sensitive Paths List (Skip Normalization)
+### 8. ~~Add Sensitive Paths List (Skip Normalization)~~ DONE
 
-**Priority**: High
+**Status**: Completed (March 2026). `_is_sensitive()` in `scope_normalize.py` checks filename and full path against configurable glob patterns. Sensitive files skip normalization, requiring exact-match learning. Configurable via `AIPERTURE_SENSITIVE_PATTERNS`. 16 tests in `tests/test_sensitive_paths.py`.
+
+~~**Priority**: High~~
 **Files**: `aiperture/permissions/scope_normalize.py`, `aiperture/config.py`
 **Effort**: Small
 
-**Problem**: Scope normalization generalizes `src/main.py` → `src/*.py` for faster learning. But this means approving reads of `src/config.py` could auto-approve `src/secrets.py` once the pattern is learned.
-
-**What to do**:
-- Add `AIPERTURE_SENSITIVE_PATTERNS` config setting (list of glob patterns, default: `["*secret*", "*credential*", "*password*", "*.env", "*.pem", "*.key", "*token*", ".env*", "*id_rsa*", "*private*"]`)
-- In `normalize_scope()`, check if the scope matches any sensitive pattern
-- If it matches: skip normalization, return the exact scope
-- This means sensitive file accesses require exact-match learning (10 approvals of `src/secrets.py` specifically, not `src/*.py`)
-
-**Why it matters**: Scope normalization is a privilege escalation vector for sensitive files.
-
 ---
 
-### 9. Add Hash Chaining to Audit Trail
+### 9. ~~Add Hash Chaining to Audit Trail~~ DONE
 
-**Priority**: High
-**Files**: `aiperture/models/audit.py`, `aiperture/stores/audit_store.py`
+**Status**: Completed (March 2026). `previous_hash` and `event_hash` fields on `AuditEvent`. SHA-256 hash chain computed on each insert. `GET /audit/verify-chain` endpoint walks the chain and detects tampering, deletions, or reordering. 8 tests in `tests/test_hash_chain.py`.
+
+~~**Priority**: High~~
+**Files**: `aiperture/models/audit.py`, `aiperture/stores/audit_store.py`, `aiperture/api/routes/audit.py`
 **Effort**: Medium
 
-**Problem**: Audit events are append-only but not cryptographically chained. A compromised database admin could delete records or reorder them. SOC 2 auditors may challenge log integrity.
-
-**What to do**:
-- Add `previous_hash: str | None` and `event_hash: str` fields to `AuditEvent`
-- On each new event:
-  1. Fetch the `event_hash` of the most recent event (or use a sentinel for the first event)
-  2. Compute `event_hash = SHA-256(previous_hash + event_id + event_type + created_at + summary + details_json)`
-  3. Store both `previous_hash` and `event_hash`
-- Add `GET /audit/verify-chain` endpoint that walks the chain and verifies integrity
-- If a gap or mismatch is found, report which events are suspect
-
-**Why it matters**: Creates a tamper-evident audit log (like a simplified blockchain). Any deletion or reordering breaks the chain and is detectable.
-
 ---
 
-### 10. Add Temporal Pattern Decay
+### 10. ~~Add Temporal Pattern Decay~~ DONE
 
-**Priority**: High
-**Files**: `aiperture/permissions/engine.py` (lines 523-590), `aiperture/config.py`
+**Status**: Completed (March 2026). `_check_learned()` checks most recent human decision age against `AIPERTURE_PATTERN_MAX_AGE_DAYS` (default 90). Expired patterns fall through to ASK, forcing periodic re-confirmation. 5 tests in `tests/test_temporal_decay.py`.
+
+~~**Priority**: High~~
+**Files**: `aiperture/permissions/engine.py`, `aiperture/config.py`
 **Effort**: Small
 
-**Problem**: Once a pattern is auto-approved via learning, it stays approved indefinitely (subject only to the 90-day lookback window). A pattern learned 60 days ago continues to auto-approve even if the project context has changed, violating the principle of least privilege.
-
-**What to do**:
-- Add `AIPERTURE_PATTERN_MAX_AGE_DAYS` config (default 90)
-- In `_check_learned()`, after computing the approval rate, also check when the most recent human decision was made
-- If the most recent human decision for this pattern is older than `max_age_days`, skip auto-approval and return no match (falling through to ASK)
-- This forces periodic re-confirmation: the human approves once, the counter resets for another 90 days
-- Include `"pattern_expired"` in the verdict factors when this triggers
-
-**Why it matters**: Implements temporal least privilege — permissions that aren't periodically reconfirmed by humans decay back to requiring approval.
-
 ---
 
-### 11. Add Rubber-Stamping Detection
+### 11. ~~Add Rubber-Stamping Detection~~ DONE
 
-**Priority**: High
-**Files**: `aiperture/permissions/engine.py` (in `record_human_decision`), `aiperture/permissions/learning.py`
+**Status**: Completed (March 2026). `record_human_decision()` tracks approval timestamps per `(session_id, tool, action)`. Rapid approvals (5+ within 60s) flagged with `:rapid` suffix on `decided_by`. Rapid decisions excluded from learning. Configurable via `AIPERTURE_RAPID_APPROVAL_WINDOW_SECONDS` and `AIPERTURE_RAPID_APPROVAL_MIN_COUNT`. 5 tests in `tests/test_rubber_stamping.py`.
+
+~~**Priority**: High~~
+**Files**: `aiperture/permissions/engine.py`, `aiperture/config.py`
 **Effort**: Small
 
-**Problem**: If a fatigued human approves 10 identical actions in 30 seconds, the learning engine treats these as high-quality signals and begins auto-approving. The approval velocity was too fast for meaningful review.
-
-**What to do**:
-- In `record_human_decision()`, track timestamps of recent approvals per `(session_id, tool, action)`
-- If N approvals (e.g., 5+) arrive within T seconds (e.g., 60s) for the same pattern, flag them with `decided_by = "human:username:rapid"` instead of `"human:username"`
-- In `_check_learned()`, either:
-  - Exclude `rapid` decisions from the approval rate calculation, OR
-  - Weight them at 50% (half credit)
-- Add `AIPERTURE_RAPID_APPROVAL_WINDOW_SECONDS` config (default 60)
-- Add `AIPERTURE_RAPID_APPROVAL_MIN_COUNT` config (default 5)
-
-**Why it matters**: Prevents approval fatigue from compromising the learning engine's signal quality.
-
 ---
 
-### 12. Persist HMAC Nonces to Database
+### 12. ~~Persist HMAC Nonces to Database~~ DONE
 
-**Priority**: High
-**Files**: `aiperture/permissions/challenge.py` (lines 30-32, 114-119)
+**Status**: Completed (March 2026). `ConsumedNonce` SQLModel table in `models/permission.py`. `verify_challenge()` checks in-memory cache first, then DB. Persists after verification. `cleanup_expired_nonces()` for maintenance. 5 tests in `tests/test_nonce_persistence.py`.
+
+~~**Priority**: High~~
+**Files**: `aiperture/permissions/challenge.py`, `aiperture/models/permission.py`
 **Effort**: Small
 
-**Problem**: Consumed nonces are tracked in an in-memory dict (`_consumed_nonces`). If the server restarts, all consumed nonces are lost. A token that was already used could be replayed within the 1-hour HMAC expiry window if the server restarts between first use and replay.
-
-**What to do**:
-- Create a `ConsumedNonce` model:
-  ```python
-  class ConsumedNonce(SQLModel, table=True):
-      nonce: str = Field(primary_key=True)
-      consumed_at: datetime
-  ```
-- In `verify_challenge()`, check the database before accepting a nonce
-- After successful verification, insert the nonce into the database
-- Add a periodic cleanup (delete nonces older than `DEFAULT_MAX_AGE_SECONDS`)
-- Keep the in-memory dict as a first-level cache (check memory first, then DB)
-
-**Why it matters**: Closes a replay attack window during server restarts. Important for production deployments where restarts happen (deploys, crashes, scaling).
-
 ---
 
-### 13. Add Health Check and Prometheus Metrics
+### 13. ~~Add Prometheus Metrics~~ DONE
 
-**Priority**: High
-**Files**: `aiperture/api/routes/` (new file or add to existing), `aiperture/permissions/engine.py`
+**Status**: Completed (March 2026). `aiperture/metrics.py` defines Prometheus counters, histograms, and gauges. `GET /metrics` endpoint serves Prometheus text format. `PermissionEngine.check()` instrumented with timing and decision counters. 6 tests in `tests/test_metrics.py`. Health check (`GET /health`) was already implemented in item 5.
+
+~~**Priority**: High~~
+**Files**: `aiperture/metrics.py`, `aiperture/api/routes/metrics.py`, `aiperture/api/app.py`, `aiperture/permissions/engine.py`
 **Effort**: Medium
-
-**Problem**: No observability. Operators have no visibility into:
-- Database health and size
-- Decision throughput and latency
-- Cache hit rate
-- Auto-approve rate
-- Learning progress
-
-**What to do**:
-- Add `GET /health` endpoint:
-  - Database connectivity check (SELECT 1)
-  - Database file size (SQLite) or connection pool status (Postgres)
-  - Row counts per table (permission_logs, audit_events, artifacts)
-  - Uptime
-- Add `GET /metrics` endpoint (Prometheus format):
-  - `aiperture_permission_checks_total{decision="allow|deny|ask"}` — counter
-  - `aiperture_permission_check_duration_seconds` — histogram
-  - `aiperture_session_cache_hits_total` / `aiperture_session_cache_misses_total` — counters
-  - `aiperture_learned_patterns_total` — gauge
-  - `aiperture_auto_approved_total` — counter
-  - `aiperture_audit_events_total` — counter
-  - `aiperture_audit_write_failures_total` — counter
-- Instrument `PermissionEngine.check()` with timing and counters
-- Use `prometheus_client` library (lightweight, no dependencies)
-
-**Why it matters**: Production deployments need monitoring. Without metrics, operators can't detect degradation, capacity issues, or anomalous behavior.
 
 ---
 

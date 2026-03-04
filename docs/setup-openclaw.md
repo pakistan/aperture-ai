@@ -238,16 +238,33 @@ For real use, update your `openclaw.json` env or `.aiperture.env`:
 | `MIN_DECISIONS` | `3` | `10` | More decisions = higher confidence |
 | `AUTO_APPROVE_THRESHOLD` | `0.80` | `0.95` | Stricter threshold = fewer false auto-approves |
 | `AUTO_DENY_THRESHOLD` | `0.05` | `0.05` | Same — deny only on strong consensus |
+| `RATE_LIMIT_PER_MINUTE` | `200` | `200` | Per-session rate limit (0 = unlimited) |
+| `SESSION_RISK_BUDGET` | `50.0` | `50.0` | Cumulative risk budget per session |
+| `PATTERN_MAX_AGE_DAYS` | `90` | `90` | Days before learned patterns expire |
 
 ```json
 {
   "env": {
     "AIPERTURE_PERMISSION_LEARNING_MIN_DECISIONS": "10",
     "AIPERTURE_AUTO_APPROVE_THRESHOLD": "0.95",
-    "AIPERTURE_AUTO_DENY_THRESHOLD": "0.05"
+    "AIPERTURE_AUTO_DENY_THRESHOLD": "0.05",
+    "AIPERTURE_RATE_LIMIT_PER_MINUTE": "200",
+    "AIPERTURE_SESSION_RISK_BUDGET": "50.0"
   }
 }
 ```
+
+## Security features
+
+AIperture includes several security hardening features active by default:
+
+- **Rate limiting** — Prevents agents from flooding the permission engine (200 checks/min per session)
+- **Session risk scoring** — Many individually-safe actions that compound are escalated to ASK
+- **Sensitive path protection** — Files like `*.env`, `*secret*`, `*.pem` require exact-match learning (not wildcard patterns)
+- **Temporal decay** — Auto-learned patterns expire after 90 days without human reconfirmation
+- **Rubber-stamping detection** — Rapid approvals (5+ within 60s) are excluded from learning
+- **Hash-chained audit trail** — Tamper-evident audit log with `GET /audit/verify-chain`
+- **Prometheus metrics** — `GET /metrics` for production monitoring
 
 ## Troubleshooting
 

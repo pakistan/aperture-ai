@@ -302,13 +302,21 @@ If you're a solo developer running Claude Code on personal projects, `CLAUDE.md`
 | **Learning Engine** | Frequency-based pattern detection: tracks approval/denial rates per (tool, action, scope) and auto-decides after 10+ consistent decisions |
 | **Crowd Wisdom** | Aggregates decisions across your org — surfaces what your team usually approves or denies |
 | **Artifact Store** | SHA-256 verified, immutable storage for every agent output |
-| **Audit Trail** | Append-only compliance log of every permission decision |
+| **Audit Trail** | Append-only, hash-chained compliance log of every permission decision — tamper-evident with `GET /audit/verify-chain` |
 | **Compliance Tracking** | Detects unchecked tool executions — tools that ran without a prior permission check |
 | **HMAC Challenge-Response** | Cryptographic proof that a human saw the verdict before approving — prevents agent self-approval |
 | **Bootstrap Presets** | Pre-seed safe patterns (`developer`, `readonly`, `minimal`) so AIperture is useful from the first session |
 | **Revocation** | Undo learned patterns instantly — `aiperture revoke shell execute "rm*"` |
 | **Content Awareness** | Differentiates writes to the same file by content hash — a rewrite of `main.py` is flagged even if a prior write was approved |
 | **Scope Normalization** | Groups `git log`, `git log --oneline`, `git log -5` into `git log*` so approvals accumulate faster |
+| **Sensitive Path Protection** | Configurable glob patterns (`AIPERTURE_SENSITIVE_PATTERNS`) skip scope normalization — sensitive files require exact-match learning |
+| **Rate Limiting** | Per-session rate limiter (200 checks/min default) prevents DoS and permission enumeration |
+| **Session Risk Scoring** | Cumulative risk budget per session — many individually-safe actions that compound are escalated to ASK |
+| **Temporal Pattern Decay** | Auto-learned patterns expire after 90 days (configurable) without human reconfirmation |
+| **Rubber-Stamping Detection** | Rapid approvals (5+ within 60s) are flagged and excluded from the learning engine |
+| **Hash-Chained Audit** | SHA-256 hash chain on audit events — `GET /audit/verify-chain` detects tampering or deletion |
+| **Nonce Persistence** | HMAC nonces persisted to database — closes replay attack window across server restarts |
+| **Prometheus Metrics** | `GET /metrics` — permission check counters, latency histograms, cache hit rates, risk budget counters |
 | **Health Check** | `GET /health` — database connectivity probe, returns healthy/degraded status |
 | **Circuit Breaker** | Database failures during permission checks fail closed (default deny), never crash or allow |
 | **REST API** | FastAPI server — works with any agent runtime over HTTP |
@@ -398,6 +406,80 @@ aiperture revoke filesystem write "*.py" --org=prod  # Org-scoped revocation
 
 Revoked decisions are soft-deleted (preserved for audit) but excluded from learning, crowd signals, and auto-approval. The pattern immediately requires fresh human decisions.
 
+### Rate limiting
+
+Per-session rate limiter prevents runaway or compromised agents from flooding the permission engine:
+
+```bash
+export AIPERTURE_RATE_LIMIT_PER_MINUTE=200    # default; 0 = unlimited
+```
+
+When exceeded, permission checks return DENY with `rate_limit_exceeded` factor. Prevents DoS and permission enumeration attacks.
+
+### Cumulative session risk scoring
+
+AIperture tracks a cumulative risk budget per session. Each action's risk score (LOW=0.1, MEDIUM=0.3, HIGH=0.7, CRITICAL=1.0) is deducted from the budget. When the budget is exhausted, all subsequent checks are escalated to ASK — even if the pattern would normally be auto-approved.
+
+```bash
+export AIPERTURE_SESSION_RISK_BUDGET=50.0     # default
+```
+
+This prevents "death by a thousand cuts" attacks where many individually-safe actions compound into data exfiltration.
+
+### Sensitive path protection
+
+Scope normalization groups files like `src/config.py` and `src/secrets.py` into `src/*.py` for faster learning. But this creates a privilege escalation vector for sensitive files. AIperture skips normalization for files matching configurable glob patterns:
+
+```bash
+export AIPERTURE_SENSITIVE_PATTERNS="*secret*,*credential*,*password*,*.env,*.pem,*.key,*token*,.env*,*id_rsa*,*private*"
+```
+
+Sensitive files require exact-match learning — 10 approvals of `src/secrets.py` specifically, not `src/*.py`.
+
+### Temporal pattern decay
+
+Auto-learned patterns expire after a configurable period without human reconfirmation:
+
+```bash
+export AIPERTURE_PATTERN_MAX_AGE_DAYS=90      # default
+```
+
+If the most recent human decision for a pattern is older than the configured age, auto-approval is disabled and the action falls through to ASK. This implements temporal least privilege — permissions decay back to requiring approval.
+
+### Rubber-stamping detection
+
+If a fatigued human rapidly approves many actions (5+ within 60 seconds for the same pattern), those decisions are flagged with a `:rapid` suffix and excluded from the learning engine. This prevents approval fatigue from compromising learning quality.
+
+```bash
+export AIPERTURE_RAPID_APPROVAL_WINDOW_SECONDS=60
+export AIPERTURE_RAPID_APPROVAL_MIN_COUNT=5
+```
+
+### Hash-chained audit trail
+
+Every audit event is cryptographically chained using SHA-256. Each event stores `previous_hash` and `event_hash`. Any deletion, reordering, or tampering breaks the chain and is detectable:
+
+```bash
+curl localhost:8100/audit/verify-chain
+# {"valid": true, "events_checked": 142, "chain_status": "intact"}
+```
+
+This creates a tamper-evident audit log suitable for SOC 2 compliance.
+
+### HMAC nonce persistence
+
+HMAC challenge nonces are persisted to the database (with in-memory caching for performance). This closes the replay attack window that existed when nonces were only tracked in-memory — a server restart no longer allows token replay within the 1-hour expiry window.
+
+### Prometheus metrics
+
+Production observability via Prometheus-compatible metrics:
+
+```bash
+curl localhost:8100/metrics
+```
+
+Exposes: `aiperture_permission_checks_total`, `aiperture_permission_check_duration_seconds`, cache hit/miss counters, auto-approve/deny counters, rate limit counters, risk budget exhaustion counters, and audit write metrics.
+
 ### Content awareness
 
 Pass a `content_hash` (SHA-256 of the content being written) with your permission check. Different content gets separate cache entries, so rewriting `main.py` with new content is flagged even if a prior write to `main.py` was approved. The verdict includes a `content_changed` flag when the same file is being written with different content than before.
@@ -421,6 +503,12 @@ All settings via environment variables (prefix `AIPERTURE_`):
 | `AIPERTURE_AUTO_APPROVE_THRESHOLD` | `0.95` | Approval rate to trigger auto-approve |
 | `AIPERTURE_AUTO_DENY_THRESHOLD` | `0.05` | Approval rate to trigger auto-deny |
 | `AIPERTURE_INTELLIGENCE_ENABLED` | `false` | Cross-org intelligence (opt-in) |
+| `AIPERTURE_SENSITIVE_PATTERNS` | `*secret*,*credential*,...` | Glob patterns for sensitive files (skip normalization) |
+| `AIPERTURE_PATTERN_MAX_AGE_DAYS` | `90` | Days before auto-learned patterns expire |
+| `AIPERTURE_RAPID_APPROVAL_WINDOW_SECONDS` | `60` | Time window for rubber-stamping detection |
+| `AIPERTURE_RAPID_APPROVAL_MIN_COUNT` | `5` | Min approvals in window to flag as rubber-stamping |
+| `AIPERTURE_RATE_LIMIT_PER_MINUTE` | `200` | Max permission checks per session per minute |
+| `AIPERTURE_SESSION_RISK_BUDGET` | `50.0` | Cumulative risk budget per session |
 | `AIPERTURE_API_KEY` | — | Bearer token for HTTP API auth (empty = open access) |
 | `AIPERTURE_API_HOST` | `0.0.0.0` | API bind host |
 | `AIPERTURE_API_PORT` | `8100` | API bind port |
