@@ -22,7 +22,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AIperture",
         description="The permission layer for AI agents. Controls what passes through.",
-        version="0.3.1",
+        version="0.4.0",
         lifespan=lifespan,
         dependencies=[Depends(require_api_key)],
     )
