@@ -34,6 +34,7 @@ logging.basicConfig(
     format="%(asctime)s [aiperture] %(levelname)s %(message)s",
     stream=sys.stderr,
 )
+aiperture.config.setup_file_logging()
 logger = logging.getLogger(__name__)
 
 

@@ -263,6 +263,33 @@ aiperture serve
 
 All requests must then include `Authorization: Bearer your-secret-key`. The MCP server is unaffected — it uses stdio transport and doesn't go through the HTTP API.
 
+## Viewing logs
+
+Claude Code spawns `aiperture mcp-serve` automatically, so stderr logs are invisible. To see what AIperture is doing, enable file logging:
+
+```json
+{
+  "mcpServers": {
+    "aiperture": {
+      "type": "stdio",
+      "command": "aiperture",
+      "args": ["mcp-serve"],
+      "env": {
+        "AIPERTURE_LOG_FILE": "~/.aiperture/aiperture.log"
+      }
+    }
+  }
+}
+```
+
+Then in a separate terminal:
+
+```bash
+tail -f ~/.aiperture/aiperture.log
+```
+
+Logs rotate automatically at 5 MB with 3 backups.
+
 ## Troubleshooting
 
 **"aiperture: command not found"**

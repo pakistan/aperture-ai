@@ -497,6 +497,8 @@ All settings via environment variables (prefix `AIPERTURE_`):
 | `AIPERTURE_RAPID_APPROVAL_MIN_COUNT` | `5` | Min approvals in window to flag as rubber-stamping |
 | `AIPERTURE_RATE_LIMIT_PER_MINUTE` | `200` | Max permission checks per session per minute |
 | `AIPERTURE_SESSION_RISK_BUDGET` | `50.0` | Cumulative risk budget per session |
+| `AIPERTURE_LOG_LEVEL` | `DEBUG` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `AIPERTURE_LOG_FILE` | — | File path for log output (e.g. `~/.aiperture/aiperture.log`). 5 MB rotating, 3 backups |
 | `AIPERTURE_API_KEY` | — | Bearer token for HTTP API auth (empty = open access) |
 | `AIPERTURE_API_HOST` | `0.0.0.0` | API bind host |
 | `AIPERTURE_API_PORT` | `8100` | API bind port |

@@ -1,6 +1,7 @@
-"""Tests for permission decision logging and AIPERTURE_LOG_LEVEL setting."""
+"""Tests for permission decision logging, AIPERTURE_LOG_LEVEL, and AIPERTURE_LOG_FILE settings."""
 
 import logging
+import os
 
 from aiperture.models import Permission, PermissionDecision
 from aiperture.permissions import PermissionEngine
@@ -107,3 +108,66 @@ class TestLogLevelConfig:
         assert aiperture.config.settings.log_level == "WARNING"
         # Reset
         update_settings({"log_level": original})
+
+
+class TestLogFileConfig:
+    """Verify the log_file setting and setup_file_logging()."""
+
+    def test_default_log_file_is_empty(self):
+        from aiperture.config import Settings
+        s = Settings()
+        assert s.log_file == ""
+
+    def test_setup_noop_when_empty(self):
+        import aiperture.config
+        original = aiperture.config.settings.log_file
+        object.__setattr__(aiperture.config.settings, "log_file", "")
+        root_handlers_before = len(logging.getLogger().handlers)
+        aiperture.config.setup_file_logging()
+        assert len(logging.getLogger().handlers) == root_handlers_before
+        object.__setattr__(aiperture.config.settings, "log_file", original)
+
+    def test_creates_file_and_parent_dirs(self, tmp_path):
+        import aiperture.config
+
+        log_path = tmp_path / "sub" / "deep" / "test.log"
+        original = aiperture.config.settings.log_file
+        object.__setattr__(aiperture.config.settings, "log_file", str(log_path))
+        try:
+            aiperture.config.setup_file_logging()
+            assert log_path.parent.exists()
+            # Write a log message to flush to file
+            logging.getLogger("aiperture.test").warning("file-log-test-marker")
+            # Find and flush the handler we added
+            for h in logging.getLogger().handlers:
+                h.flush()
+            assert log_path.exists()
+        finally:
+            # Clean up: remove the handler we added
+            root = logging.getLogger()
+            root.handlers = [
+                h for h in root.handlers
+                if not (hasattr(h, "baseFilename") and h.baseFilename == str(log_path))
+            ]
+            object.__setattr__(aiperture.config.settings, "log_file", original)
+
+    def test_log_messages_appear_in_file(self, tmp_path):
+        import aiperture.config
+
+        log_path = tmp_path / "appear.log"
+        original = aiperture.config.settings.log_file
+        object.__setattr__(aiperture.config.settings, "log_file", str(log_path))
+        try:
+            aiperture.config.setup_file_logging()
+            logging.getLogger("aiperture.test").warning("unique-marker-12345")
+            for h in logging.getLogger().handlers:
+                h.flush()
+            content = log_path.read_text()
+            assert "unique-marker-12345" in content
+        finally:
+            root = logging.getLogger()
+            root.handlers = [
+                h for h in root.handlers
+                if not (hasattr(h, "baseFilename") and h.baseFilename == str(log_path))
+            ]
+            object.__setattr__(aiperture.config.settings, "log_file", original)

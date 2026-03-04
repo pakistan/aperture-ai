@@ -12,6 +12,7 @@ logging.basicConfig(
     level=getattr(logging, aiperture.config.settings.log_level.upper(), logging.INFO),
     format="%(asctime)s [aiperture] %(levelname)s %(message)s",
 )
+aiperture.config.setup_file_logging()
 
 app = create_app()
 

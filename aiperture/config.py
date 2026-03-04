@@ -8,6 +8,8 @@ via the config API, CLI wizard, or MCP tools.
 
 from __future__ import annotations
 
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -54,6 +56,7 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "DEBUG"  # DEBUG, INFO, WARNING, ERROR
+    log_file: str = ""  # Path to log file (e.g. ~/.aiperture/aiperture.log)
 
     # API
     api_host: str = "0.0.0.0"
@@ -230,3 +233,27 @@ def get_plugin_configs() -> dict[str, dict]:
 
 # Module-level singleton — access via `aiperture.config.settings`
 settings = Settings()
+
+
+def setup_file_logging() -> None:
+    """Add a RotatingFileHandler to the root logger when log_file is set.
+
+    Creates parent directories automatically. Expands ~ in paths.
+    No-op when log_file is empty.
+    """
+    if not settings.log_file:
+        return
+
+    log_path = Path(settings.log_file).expanduser()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    handler = RotatingFileHandler(
+        str(log_path),
+        maxBytes=5 * 1024 * 1024,  # 5 MB
+        backupCount=3,
+    )
+    handler.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [aiperture] %(levelname)s %(message)s")
+    )
+    logging.getLogger().addHandler(handler)
