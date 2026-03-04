@@ -74,6 +74,8 @@ aiperture/
 │   ├── cli.py               # CLI entry point (setup-claude | remove-claude | serve | mcp-serve | init-db | configure | bootstrap | revoke)
 │   └── mcp_server.py        # MCP server (14 tools, stdio transport) + plugin mcp_tools
 ├── docs/
+│   ├── releasing.md         # Release process index
+│   ├── release-pip.md       # PyPI publishing workflow
 │   └── plugins.md           # Plugin development guide
 ├── examples/
 │   ├── openclaw_demo.py     # Dual-mode demo (real OpenClaw or simulated)
