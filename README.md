@@ -1,40 +1,15 @@
 # AIperture
 
-**The permission layer for AI agents.**
+[![PyPI version](https://img.shields.io/pypi/v/aiperture)](https://pypi.org/project/aiperture/)
+[![Python 3.12+](https://img.shields.io/pypi/pyversions/aiperture)](https://pypi.org/project/aiperture/)
+[![License: Apache 2.0](https://img.shields.io/github/license/pakistan/aiperture)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-576%20passed-brightgreen)]()
+
+**The permission layer for AI agents. Zero LLM calls. Fully deterministic.**
 
 AI agents can run shell commands, read your files, call APIs, and modify databases. Today, you're the only thing standing between an agent and `rm -rf /`. Every action gets a yes/no popup. You either approve everything blindly or slow your workflow to a crawl.
 
-AIperture sits between your agent runtime and the outside world. It learns your permission preferences over time and auto-approves the safe stuff — so you only get asked about things that actually matter.
-
-**No LLM calls.** Every decision is deterministic. Zero latency from model inference, zero marginal cost per decision.
-
-## Works with every major agent runtime
-
-| Runtime | Integration | Status |
-|---|---|---|
-| **Claude Code** | Native hooks (PermissionRequest + PostToolUse) | Stable |
-| **OpenAI Agents SDK** | Python middleware (`AipertureGuardrail`, `@aiperture_guard`) | Preview |
-| **Google ADK** | Python middleware (`ADKPermissionGuard`) | Preview |
-| **OpenClaw** | MCP server | Preview |
-| **Cursor / Windsurf** | MCP server | Planned |
-| **Any MCP runtime** | `aiperture mcp-serve` | Stable |
-| **Any HTTP client** | REST API on `localhost:8100` | Stable |
-
-```python
-# OpenAI Agents SDK
-from aiperture.integrations.openai import AipertureGuardrail
-agent = Agent(name="my-agent", tools=[...], input_guardrails=[AipertureGuardrail()])
-
-# Google ADK
-from aiperture.integrations.google_adk import ADKPermissionGuard
-guard = ADKPermissionGuard()
-
-# Claude Code — one command, no code
-# aiperture setup-claude --bootstrap=developer
-
-# Any MCP runtime — point at the server
-# aiperture mcp-serve
-```
+AIperture sits between your agent runtime and the outside world. It learns your permission preferences over time and auto-approves the safe stuff — so you only get asked about things that actually matter. Every decision is glob matching and frequency counting. No model inference, no API calls, no latency.
 
 ## How it works
 
@@ -53,7 +28,7 @@ Agent: "Can I run `npm test`?"
      └─ Always:  ASK   → HIGH risk. Never auto-approved.
 ```
 
-The learning engine is frequency counting with configurable thresholds — no ML, no embeddings, no training step. Scope normalization groups `git log`, `git log --oneline`, and `git log -5` into `git log*` so approvals accumulate faster.
+Scope normalization groups `git log`, `git log --oneline`, and `git log -5` into `git log*` — approvals accumulate faster, fewer prompts sooner.
 
 ## Getting started
 
@@ -61,13 +36,16 @@ The learning engine is frequency counting with configurable thresholds — no ML
 pip install aiperture          # Python 3.12+
 ```
 
-### Claude Code
+The fastest path — Claude Code, one command:
 
 ```bash
 aiperture setup-claude --bootstrap=developer
 ```
 
-75 safe patterns pre-approved. Restart Claude Code and you're done. [Full guide →](docs/setup-claude-code.md)
+75 safe patterns pre-approved. Restart Claude Code and you're done. [Full Claude Code guide →](docs/setup-claude-code.md)
+
+<details>
+<summary><strong>Other runtimes</strong></summary>
 
 ### OpenAI Agents SDK
 
@@ -120,20 +98,41 @@ curl -X POST localhost:8100/permissions/check \
   -d '{"tool": "shell", "action": "execute", "scope": "npm test"}'
 ```
 
+</details>
+
+## Runtime support
+
+| Runtime | Integration | Status |
+|---|---|---|
+| **Claude Code** | Native hooks (PermissionRequest + PostToolUse) | Stable |
+| **OpenAI Agents SDK** | Python middleware | Preview |
+| **Google ADK** | Python middleware | Preview |
+| **OpenClaw** | MCP server | Preview |
+| **Cursor / Windsurf** | MCP server | Planned |
+| **Any MCP runtime** | `aiperture mcp-serve` | Stable |
+| **Any HTTP client** | REST API | Stable |
+
+## Why AIperture
+
+| | CLAUDE.md / built-in rules | AIperture |
+|---|---|---|
+| **Learning** | Manual rules, same prompts every session | Learns from your decisions, auto-approves over time |
+| **Runtimes** | One (Claude Code) | Claude Code, OpenAI, Google ADK, OpenClaw, any MCP or HTTP client |
+| **Risk analysis** | None | Unpacks `bash -c`, `curl \| sh`, `find -exec`. Scores LOW → CRITICAL |
+| **Audit trail** | None | Append-only, SHA-256 hash-chained, SOC 2 compliant |
+| **Team use** | Per-developer | Org-level crowd signals, shared learning |
+| **Revocation** | Delete the rule | `aiperture revoke` with full audit trail |
+
 ## Security
 
-AIperture includes multiple layers of protection:
+Built for environments where AI agents touch production systems:
 
-- **HMAC challenge-response** — cryptographic proof that a human saw the verdict before approving
-- **Deep risk analysis** — unpacks `bash -c`, `curl | sh`, `python -c "os.system(...)"`, `find -exec`. HIGH/CRITICAL actions are never auto-approved
-- **Fail-closed circuit breaker** — database failures default to ASK, never ALLOW
-- **Rate limiting** — 200 checks/min per session (configurable), prevents DoS and enumeration
-- **Session risk budgets** — cumulative risk scoring prevents "death by a thousand cuts" exfiltration
-- **Rubber-stamping detection** — rapid approvals (5+ in 60s) are flagged and excluded from learning
+- **SOC 2 compliant audit trail** — SHA-256 hash-chained, tamper-evident, every decision logged
+- **Deep risk analysis** — unpacks shell wrappers, pipe-to-exec, scripting oneliners. HIGH/CRITICAL actions are never auto-approved
+- **Fail-closed** — database failures default to ASK, never ALLOW
+- **Rubber-stamping detection** — rapid approvals are flagged and excluded from learning
+- **Session risk budgets** — cumulative scoring prevents "death by a thousand cuts" exfiltration
 - **Temporal decay** — learned patterns expire after 90 days without reconfirmation
-- **Hash-chained audit trail** — SHA-256 chained, tamper-evident, SOC 2 compliant
-- **Sensitive path protection** — secrets, credentials, keys skip scope normalization
-- **API authentication** — optional bearer token auth on all HTTP endpoints
 
 ## Enterprise
 
@@ -209,3 +208,7 @@ python -m pytest tests/ -v       # 576 tests
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
+
+---
+
+If AIperture is useful to you, consider giving it a star. It helps others find the project.
