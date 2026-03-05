@@ -47,7 +47,7 @@ Agent: "Can I run `npm test`?"
      ├─ Day 1:   ASK   → You approved it. Recorded.
      ├─ Day 2:   ASK   → You approved it again. Recorded.
      ├─ ...
-     ├─ Day 5:   ALLOW → Auto-approved. You learned this pattern.
+     ├─ Day 5:   ALLOW → Auto-approved. AIperture learned this pattern.
      │
      ├─ "Can I run `rm -rf /`?"
      └─ Always:  ASK   → HIGH risk. Never auto-approved.
@@ -147,7 +147,7 @@ AIperture includes multiple layers of protection:
 
 AIperture is open-core. The open-source version includes the full permission engine, learning, risk scoring, audit trail, and all runtime integrations.
 
-The enterprise version adds:
+The enterprise version (coming soon) will add:
 
 - Redis/Valkey session cache
 - OIDC/SAML authentication
@@ -156,7 +156,7 @@ The enterprise version adds:
 - Postgres backend
 - Multi-tenant isolation
 
-The plugin architecture uses Python entry points — install `aiperture-enterprise` alongside `aiperture` and enterprise features activate automatically. [Plugin guide →](docs/plugins.md)
+The plugin architecture is built and ready — 10 extension points using Python entry points. Install `aiperture-enterprise` alongside `aiperture` and enterprise features activate automatically. [Plugin guide →](docs/plugins.md)
 
 <details>
 <summary><strong>Configuration reference</strong></summary>
