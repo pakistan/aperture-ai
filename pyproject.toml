@@ -1,6 +1,6 @@
 [project]
 name = "aiperture"
-version = "0.13.0"
+version = "0.14.0"
 description = "The permission layer for AI agents. Controls what passes through."
 readme = "README.md"
 license = "Apache-2.0"
