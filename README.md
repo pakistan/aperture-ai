@@ -12,13 +12,13 @@ AIperture sits between your agent runtime and the outside world. It learns your 
 
 | Runtime | Integration | Status |
 |---|---|---|
-| **Claude Code** | Native hooks (PermissionRequest + PostToolUse) | Production |
-| **OpenAI Agents SDK** | Python middleware (`AipertureGuardrail`, `@aiperture_guard`) | Production |
-| **Google ADK** | Python middleware (`ADKPermissionGuard`) | Production |
-| **OpenClaw** | MCP server | Production |
-| **Cursor / Windsurf** | MCP server | Production |
-| **Any MCP runtime** | `aiperture mcp-serve` | Production |
-| **Any HTTP client** | REST API on `localhost:8100` | Production |
+| **Claude Code** | Native hooks (PermissionRequest + PostToolUse) | Stable |
+| **OpenAI Agents SDK** | Python middleware (`AipertureGuardrail`, `@aiperture_guard`) | Preview |
+| **Google ADK** | Python middleware (`ADKPermissionGuard`) | Preview |
+| **OpenClaw** | MCP server | Preview |
+| **Cursor / Windsurf** | MCP server | Planned |
+| **Any MCP runtime** | `aiperture mcp-serve` | Stable |
+| **Any HTTP client** | REST API on `localhost:8100` | Stable |
 
 ```python
 # OpenAI Agents SDK
