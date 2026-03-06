@@ -23,6 +23,7 @@ generic integration layer in aiperture.integrations.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import logging
@@ -31,10 +32,12 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
+from sqlmodel import Session, select
 
+from aiperture.db import get_engine
 from aiperture.hooks.pending_tracker import PendingRequest, PendingTracker
 from aiperture.hooks.tool_mapping import map_tool
-from aiperture.models.permission import PermissionDecision
+from aiperture.models.permission import PermissionDecision, PermissionLog
 from aiperture.models.verdict import RiskTier
 from aiperture.permissions.engine import get_shared_engine
 from aiperture.permissions.learning import PermissionLearner
@@ -65,6 +68,106 @@ def _pending_key(session_id: str, tool_name: str, tool_input: dict[str, Any]) ->
     input_str = json.dumps(tool_input, sort_keys=True, default=str)
     digest = hashlib.sha256(f"{session_id}:{tool_name}:{input_str}".encode()).hexdigest()[:16]
     return digest
+
+
+def _learning_progress(
+    tool: str,
+    action: str,
+    scope: str,
+    organization_id: str,
+    project_id: str,
+) -> dict[str, Any] | None:
+    """Compute how close a pattern is to auto-approve/deny.
+
+    Returns dict with current_count, needed, approval_rate, status, message.
+    Returns None on error or if learning is disabled.
+    """
+    import aiperture.config
+
+    settings = aiperture.config.settings
+    if not settings.permission_learning_enabled:
+        return None
+
+    min_decisions = settings.permission_learning_min_decisions
+    approve_threshold = settings.auto_approve_threshold
+    deny_threshold = settings.auto_deny_threshold
+
+    try:
+        with Session(get_engine()) as db:
+            logs = db.exec(
+                select(PermissionLog).where(
+                    PermissionLog.organization_id == organization_id,
+                    PermissionLog.project_id == project_id,
+                    PermissionLog.tool == tool,
+                    PermissionLog.action == action,
+                    PermissionLog.decided_by.startswith("human:"),  # type: ignore[union-attr]
+                    PermissionLog.revoked_at.is_(None),  # type: ignore[union-attr]
+                )
+            ).all()
+    except Exception:
+        return None
+
+    matching = [
+        log for log in logs
+        if fnmatch.fnmatch(scope, log.scope) and not log.decided_by.endswith(":rapid")
+    ]
+
+    current = len(matching)
+    if current == 0:
+        return {
+            "current_count": 0,
+            "needed": min_decisions,
+            "approval_rate": 0.0,
+            "status": "new",
+            "message": f"First approval recorded. {min_decisions} needed for auto-approve.",
+        }
+
+    allow_count = sum(1 for log in matching if log.decision == PermissionDecision.ALLOW)
+    rate = allow_count / current if current else 0.0
+
+    if current >= min_decisions and rate >= approve_threshold:
+        return {
+            "current_count": current,
+            "needed": 0,
+            "approval_rate": rate,
+            "status": "auto_approve",
+            "message": f"Pattern auto-approved ({current} decisions, {rate:.0%} approval rate).",
+        }
+
+    if current >= min_decisions and rate <= deny_threshold:
+        return {
+            "current_count": current,
+            "needed": 0,
+            "approval_rate": rate,
+            "status": "auto_deny",
+            "message": f"Pattern auto-denied ({current} decisions, {rate:.0%} approval rate).",
+        }
+
+    remaining = max(0, min_decisions - current)
+    if remaining > 0:
+        return {
+            "current_count": current,
+            "needed": remaining,
+            "approval_rate": rate,
+            "status": "learning",
+            "message": f"{current}/{min_decisions} decisions recorded. {remaining} more needed for auto-approve.",
+        }
+
+    return {
+        "current_count": current,
+        "needed": 0,
+        "approval_rate": rate,
+        "status": "mixed",
+        "message": f"{current} decisions at {rate:.0%} approval — not enough consensus for auto-approve ({approve_threshold:.0%} needed).",
+    }
+
+
+def _short_scope(scope: str, max_len: int = 60) -> str:
+    """Truncate scope for display, preserving start and end."""
+    if len(scope) <= max_len:
+        return scope
+    half = (max_len - 3) // 2
+    return scope[:half] + "..." + scope[-half:]
 
 
 # --- SessionStart endpoint ---
@@ -104,34 +207,39 @@ def handle_session_start():
             1 for p in patterns
             if p.approval_rate <= settings.auto_deny_threshold
         )
-        total_patterns = auto_approve + auto_deny
     except Exception:
         logger.warning("Could not load patterns for session-start", exc_info=True)
         patterns = []
         auto_approve = 0
         auto_deny = 0
-        total_patterns = 0
 
     # Build user-visible status line
-    parts = [f"{total_patterns} learned patterns"]
-    if settings.permission_learning_enabled:
-        parts.append("learning enabled")
-    else:
-        parts.append("learning disabled")
-    parts.append(f"project={project_id}")
-    status_line = f"AIperture active \u2014 {', '.join(parts)}"
+    status_parts = []
+    if auto_approve > 0:
+        status_parts.append(f"{auto_approve} auto-approve")
+    if auto_deny > 0:
+        status_parts.append(f"{auto_deny} auto-deny")
+    pattern_summary = " and ".join(status_parts) + " patterns" if status_parts else "no learned patterns yet"
+
+    status_line = f"AIperture active — {pattern_summary}, project={project_id}"
 
     # Build context for Claude
     context_parts = [
-        "AIperture permission layer is active.",
+        f"AIperture permission layer is active for project '{project_id}'.",
         f"{auto_approve} auto-approve and {auto_deny} auto-deny patterns learned.",
     ]
     if settings.permission_learning_enabled:
         context_parts.append(
             "New patterns are learned from human permission decisions via hooks."
         )
+        context_parts.append(
+            f"After {settings.permission_learning_min_decisions} consistent approvals, patterns auto-approve."
+        )
     context_parts.append(
         "HIGH/CRITICAL risk actions are never auto-approved."
+    )
+    context_parts.append(
+        "When AIperture auto-approves or learns from a decision, you will see status messages in the hook responses."
     )
 
     return {
@@ -194,6 +302,7 @@ def handle_permission_request(payload: PermissionRequestPayload):
     tool, action, scope = mapping
     project_id = detect_project_id()
     pkey = _pending_key(payload.session_id, payload.tool_name, payload.tool_input)
+    display_scope = _short_scope(scope)
 
     # Collect expired pending requests (piggybacked cleanup)
     _process_expired_denials()
@@ -252,7 +361,13 @@ def handle_permission_request(payload: PermissionRequestPayload):
                 "hookEventName": "PermissionRequest",
                 "decision": {
                     "behavior": "allow",
+                    "message": f"AIperture auto-approved {payload.tool_name}({display_scope})",
                 },
+                "additionalContext": (
+                    f"AIperture auto-approved this action based on learned patterns. "
+                    f"Tool: {payload.tool_name}, scope: {display_scope}. "
+                    f"Decided by: {verdict.decided_by}."
+                ),
             },
         }
 
@@ -278,7 +393,10 @@ def handle_permission_request(payload: PermissionRequestPayload):
                 "hookEventName": "PermissionRequest",
                 "decision": {
                     "behavior": "deny",
-                    "message": f"AIperture auto-denied: {tool}.{action} on {scope}",
+                    "message": (
+                        f"AIperture auto-denied {payload.tool_name}({display_scope}). "
+                        f"This pattern has been consistently denied in past decisions."
+                    ),
                 },
             },
         }
@@ -309,6 +427,8 @@ def handle_post_tool_use(
 
     Skips recording if the tool was auto-approved by AIperture (to avoid
     double-counting).
+
+    Returns learning progress so Claude can relay milestones to the user.
     """
     from aiperture.config import settings
     from aiperture.metrics import HOOK_POST_TOOL_USE
@@ -352,6 +472,49 @@ def handle_post_tool_use(
         session_id=payload.session_id,
         project_id=project_id,
     )
+
+    # Compute learning progress (synchronous — fast, single DB query)
+    display_scope = _short_scope(scope)
+    progress = _learning_progress(tool, action, scope, "default", project_id)
+
+    if progress and progress["status"] == "auto_approve":
+        # Just reached auto-approve threshold!
+        return {
+            "recorded": True,
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": (
+                    f"AIperture milestone: {payload.tool_name}({display_scope}) "
+                    f"will now be auto-approved! "
+                    f"{progress['current_count']} decisions at {progress['approval_rate']:.0%} approval rate. "
+                    f"Future uses will skip the permission prompt."
+                ),
+            },
+        }
+
+    if progress and progress["status"] == "learning":
+        return {
+            "recorded": True,
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": (
+                    f"AIperture learned: approval recorded for {payload.tool_name}({display_scope}). "
+                    f"{progress['message']}"
+                ),
+            },
+        }
+
+    if progress and progress["status"] == "new":
+        return {
+            "recorded": True,
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": (
+                    f"AIperture: first approval recorded for {payload.tool_name}({display_scope}). "
+                    f"{progress['message']}"
+                ),
+            },
+        }
 
     return {"recorded": True}
 

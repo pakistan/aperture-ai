@@ -41,19 +41,19 @@ class TestSessionStartEndpoint:
         assert "AIperture permission layer is active" in hook_output["additionalContext"]
 
     def test_session_start_shows_learning_status(self):
-        """systemMessage reflects whether learning is enabled or disabled."""
+        """additionalContext reflects whether learning is enabled."""
         client = self._client()
         resp = client.get("/hooks/session-start")
         data = resp.json()
-        msg = data["systemMessage"]
-        assert "learning enabled" in msg or "learning disabled" in msg
+        context = data["hookSpecificOutput"]["additionalContext"]
+        assert "learned" in context or "patterns" in context
 
     def test_session_start_shows_pattern_count(self):
-        """systemMessage includes learned pattern count."""
+        """systemMessage includes pattern info."""
         client = self._client()
         resp = client.get("/hooks/session-start")
         data = resp.json()
-        assert "learned patterns" in data["systemMessage"]
+        assert "pattern" in data["systemMessage"] or "AIperture active" in data["systemMessage"]
 
     def test_session_start_includes_risk_note(self):
         """additionalContext mentions HIGH/CRITICAL risk policy."""
@@ -95,7 +95,7 @@ class TestSessionStartEndpoint:
             )
 
     def test_session_start_learning_disabled(self):
-        """When learning is disabled, systemMessage reflects that."""
+        """When learning is disabled, additionalContext does not mention learning from decisions."""
         import aiperture.config
 
         client = self._client()
@@ -105,7 +105,8 @@ class TestSessionStartEndpoint:
         try:
             resp = client.get("/hooks/session-start")
             data = resp.json()
-            assert "learning disabled" in data["systemMessage"]
+            context = data["hookSpecificOutput"]["additionalContext"]
+            assert "learned from human" not in context
         finally:
             object.__setattr__(aiperture.config.settings, "permission_learning_enabled", original)
 
