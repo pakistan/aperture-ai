@@ -23,8 +23,8 @@ Three core capabilities:
 ```bash
 pipx install aiperture             # install via pipx (recommended)
 aiperture configure                # interactive setup wizard (writes .aiperture.env)
-aiperture serve                    # start API server at localhost:8100
-aiperture mcp-serve                # start MCP server on stdio
+aiperture mcp-serve                # start MCP server on stdio (includes embedded hooks server)
+aiperture serve                    # start full HTTP API server (standalone, not needed for Claude Code)
 aiperture init-db                  # initialize database
 python -m pytest tests/ -v        # run all tests
 python examples/openclaw_demo.py  # run learning loop demo
@@ -194,7 +194,7 @@ These are available via the HTTP API (`/permissions/record`, `aiperture revoke`)
 16. **HMAC nonce persistence** — `ConsumedNonce` SQLModel table persists used nonces to database. In-memory cache as first-level check, DB as fallback. Closes replay attack window across server restarts.
 17. **Hash-chained audit trail** — Each `AuditEvent` stores `previous_hash` and `event_hash` (SHA-256). `GET /audit/verify-chain` walks the chain to detect tampering, deletions, or reordering. SOC 2 compliant.
 18. **Prometheus metrics** — `GET /metrics` endpoint exposes `aiperture_permission_checks_total`, `aiperture_permission_check_duration_seconds`, cache hit/miss counters, auto-approve/deny counters, rate limit counters, risk budget exhaustion counters, hook metrics, and audit metrics.
-19. **Claude Code hook integration** — `PermissionRequest` and `PostToolUse` hooks learn from Claude Code's native permission flow. No HMAC required (Claude Code's own permission dialog is the human gate). HIGH/CRITICAL risk actions are never auto-approved via hooks. Auto-approved actions are tracked to prevent double-counting in PostToolUse. Fail-open: if AIperture server is down, hooks return non-2xx and Claude Code shows normal prompts. **Hooks are the only learning path for Claude Code** — the MCP tools are read-only.
+19. **Claude Code hook integration** — `PermissionRequest` and `PostToolUse` hooks learn from Claude Code's native permission flow. No HMAC required (Claude Code's own permission dialog is the human gate). HIGH/CRITICAL risk actions are never auto-approved via hooks. Auto-approved actions are tracked to prevent double-counting in PostToolUse. Fail-open: if the hooks server is unreachable, hooks return non-2xx and Claude Code shows normal prompts. **Hooks are the only learning path for Claude Code** — the MCP tools are read-only. The hooks HTTP server is embedded in the MCP server process (`aiperture mcp-serve`) so no separate `aiperture serve` is needed for Claude Code.
 20. **MCP tool surface hardening** — `approve_action`, `deny_action`, `revoke_permission_pattern`, and `report_tool_execution` are NOT exposed as MCP tools. An MCP caller (the AI agent) has direct access to both `check_permission` and `approve_action` — it can relay the HMAC challenge token to self-approve without human involvement. After enough self-approvals, the learning engine auto-approves the pattern permanently. The HMAC prevents *forgery* but not *relay*. These tools remain available via the HTTP API for runtimes with their own UI layers (where a human-controlled interface sits between check and approve).
 21. **Singleton PermissionEngine** — All entry points (HTTP API routes, hooks, MCP server) share a single `PermissionEngine` instance via `get_shared_engine()`. This ensures session caches, rate limiters, risk budgets, and rapid-approval trackers are consistent regardless of which path a request arrives through.
 22. **Case-insensitive critical pattern matching** — `_matches_critical_pattern()` in `risk.py` lowercases both scope and patterns before matching. Prevents bypass via case variations (e.g., `DROP DATABASE` vs `drop database`).

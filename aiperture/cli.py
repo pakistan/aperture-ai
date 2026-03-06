@@ -75,6 +75,30 @@ def main():
         sys.exit(1)
 
 
+def _ensure_gitignore() -> None:
+    """Ensure .gitignore contains patterns for AIperture DB files."""
+    from pathlib import Path
+
+    gitignore = Path(".gitignore")
+    patterns = ["*.db", "*.db-shm", "*.db-wal", ".aiperture.env"]
+
+    existing = ""
+    if gitignore.exists():
+        existing = gitignore.read_text()
+
+    missing = [p for p in patterns if p not in existing]
+    if not missing:
+        return
+
+    lines = existing.rstrip("\n")
+    if lines:
+        lines += "\n"
+    lines += "\n# AIperture\n"
+    lines += "\n".join(missing) + "\n"
+    gitignore.write_text(lines)
+    print(f"Added {', '.join(missing)} to .gitignore")  # noqa: T201
+
+
 def _setup_claude(args: list[str]):
     """Set up AIperture as Claude Code's MCP permission layer."""
     import json
@@ -165,6 +189,9 @@ def _setup_claude(args: list[str]):
     # Write hooks config to settings.json for Claude Code hook integration
     _write_hooks_config(settings, settings_path)
 
+    # Ensure DB files are in .gitignore
+    _ensure_gitignore()
+
     # Initialize database
     init_db()
     print("Database initialized.")  # noqa: T201
@@ -181,7 +208,8 @@ def _setup_claude(args: list[str]):
             sys.exit(1)
 
     print()  # noqa: T201
-    print("Done! Run `aiperture serve` before starting Claude Code for auto-learning.")  # noqa: T201
+    print("Done! Restart Claude Code to activate AIperture.")  # noqa: T201
+    print("The MCP server handles both tools and learning hooks automatically.")  # noqa: T201
     if not bootstrap_preset:
         print("Tip: run 'aiperture setup-claude --bootstrap=developer' to pre-seed 75 safe patterns.")  # noqa: T201
 
@@ -209,14 +237,13 @@ def _write_hooks_config(settings: dict, settings_path) -> None:
 
     for event_name, new_entries in aiperture_hooks.items():
         event_hooks = existing_hooks.get(event_name, [])
-        # Check if AIperture hook is already registered
-        already_registered = any(
-            any("aiperture" in h.get("url", "") for h in entry.get("hooks", []))
-            for entry in event_hooks
-        )
-        if not already_registered:
-            event_hooks.extend(new_entries)
-            added = True
+        # Remove any existing AIperture hook entries first to avoid duplicates
+        event_hooks = [
+            entry for entry in event_hooks
+            if not any("aiperture" in h.get("url", "") for h in entry.get("hooks", []))
+        ]
+        event_hooks.extend(new_entries)
+        added = True
         existing_hooks[event_name] = event_hooks
 
     settings["hooks"] = existing_hooks

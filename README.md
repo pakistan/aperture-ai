@@ -42,7 +42,7 @@ The fastest path — Claude Code, one command:
 aiperture setup-claude --bootstrap=developer
 ```
 
-75 safe patterns pre-approved. Restart Claude Code and you're done. [Full Claude Code guide →](docs/setup-claude-code.md)
+75 safe patterns pre-approved. Restart Claude Code and you're done — the MCP server handles both tools and learning hooks automatically, no extra terminal needed. [Full Claude Code guide →](docs/setup-claude-code.md)
 
 <details>
 <summary><strong>Other runtimes</strong></summary>

@@ -10,6 +10,10 @@ For Claude Code, use the hook-based integration (PermissionRequest +
 PostToolUse) where Claude Code's native permission dialog is the human gate.
 For other runtimes with their own UI layer, use the HTTP API.
 
+When running as ``aiperture mcp-serve``, an embedded HTTP server for
+Claude Code hooks is started automatically on a background thread
+(default port 8100) so that ``aiperture serve`` is not required.
+
 Usage:
     aiperture mcp-serve          # via CLI
     python -m aiperture.mcp_server  # direct
@@ -21,6 +25,7 @@ Claude Code integration:
 import json
 import logging
 import sys
+import threading
 from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP
@@ -44,16 +49,57 @@ logging.basicConfig(
 aiperture.config.setup_file_logging()
 logger = logging.getLogger(__name__)
 
+_hooks_server_thread: threading.Thread | None = None
+
+
+def _start_hooks_server() -> None:
+    """Start a lightweight HTTP server for Claude Code hooks on a daemon thread.
+
+    Uses the same hooks router as ``aiperture serve`` but in a minimal FastAPI
+    app so that no separate terminal is needed.  Binds to localhost only.
+    """
+    import uvicorn
+    from fastapi import FastAPI
+
+    from aiperture.api.routes.hooks import router as hooks_router
+
+    app = FastAPI()
+    app.include_router(hooks_router, prefix="/hooks")
+
+    # Suppress uvicorn access logs to avoid polluting MCP stdio
+    uv_config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=aiperture.config.settings.api_port,
+        log_level="warning",
+    )
+    server = uvicorn.Server(uv_config)
+
+    # Run in a daemon thread — dies when the MCP process exits
+    thread = threading.Thread(target=server.run, daemon=True, name="aiperture-hooks")
+    thread.start()
+    logger.info(
+        "Embedded hooks server started on 127.0.0.1:%d",
+        aiperture.config.settings.api_port,
+    )
+    return thread
+
 
 @asynccontextmanager
 async def lifespan(server: FastMCP):
-    """Initialize database and plugins on startup."""
+    """Initialize database, plugins, and embedded hooks server on startup."""
+    global _hooks_server_thread
     plugins.load_all()
     init_db()
     # Register plugin MCP tools if any
     plugin_tools = plugins.get("mcp_tools")
     if plugin_tools is not None:
         plugin_tools.register_tools(mcp)
+    # Start embedded hooks HTTP server for Claude Code learning
+    try:
+        _hooks_server_thread = _start_hooks_server()
+    except Exception:
+        logger.warning("Could not start embedded hooks server — learning via hooks disabled", exc_info=True)
     logger.info("AIperture MCP server ready")
     yield {}
     logger.info("AIperture MCP server shutting down")
