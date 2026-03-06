@@ -1,14 +1,19 @@
 """Claude Code hook endpoints — learn from native permission decisions.
 
-Two endpoints handle the Claude Code hooks lifecycle:
+Three endpoints handle the Claude Code hooks lifecycle:
 
-1. POST /hooks/permission-request
+1. GET /hooks/session-start
+   Called by Claude Code's SessionStart hook when a session begins.
+   Returns a systemMessage (shown to user) and additionalContext (for Claude)
+   with AIperture status: learned pattern count, learning status, config.
+
+2. POST /hooks/permission-request
    Called by Claude Code's PermissionRequest hook before showing the user a
    permission prompt. If AIperture has a learned ALLOW pattern, returns a
    hookSpecificOutput with decision.behavior="allow" to skip the prompt.
    Otherwise returns {} so Claude Code shows its normal prompt.
 
-2. POST /hooks/post-tool-use
+3. POST /hooks/post-tool-use
    Called by Claude Code's PostToolUse hook after a tool executes successfully.
    Records an implicit approval (the user saw and approved the tool call).
 
@@ -32,6 +37,7 @@ from aiperture.hooks.tool_mapping import map_tool
 from aiperture.models.permission import PermissionDecision
 from aiperture.models.verdict import RiskTier
 from aiperture.permissions.engine import get_shared_engine
+from aiperture.permissions.learning import PermissionLearner
 from aiperture.permissions.risk import classify_risk
 from aiperture.stores.audit_store import AuditStore
 
@@ -58,6 +64,73 @@ def _pending_key(session_id: str, tool_name: str, tool_input: dict[str, Any]) ->
     input_str = json.dumps(tool_input, sort_keys=True, default=str)
     digest = hashlib.sha256(f"{session_id}:{tool_name}:{input_str}".encode()).hexdigest()[:16]
     return digest
+
+
+# --- SessionStart endpoint ---
+
+
+@router.get("/session-start")
+def handle_session_start():
+    """Handle Claude Code SessionStart hook.
+
+    Returns a systemMessage (visible to user) with AIperture status,
+    and additionalContext (for Claude) with operational details.
+    """
+    import aiperture.config
+
+    settings = aiperture.config.settings
+    learner = PermissionLearner()
+
+    # Count learned patterns
+    try:
+        patterns = learner.detect_patterns(
+            organization_id="default",
+            min_decisions=settings.permission_learning_min_decisions,
+        )
+        auto_approve = sum(
+            1 for p in patterns
+            if p.approval_rate >= settings.auto_approve_threshold
+        )
+        auto_deny = sum(
+            1 for p in patterns
+            if p.approval_rate <= settings.auto_deny_threshold
+        )
+        total_patterns = auto_approve + auto_deny
+    except Exception:
+        logger.warning("Could not load patterns for session-start", exc_info=True)
+        patterns = []
+        auto_approve = 0
+        auto_deny = 0
+        total_patterns = 0
+
+    # Build user-visible status line
+    parts = [f"{total_patterns} learned patterns"]
+    if settings.permission_learning_enabled:
+        parts.append("learning enabled")
+    else:
+        parts.append("learning disabled")
+    status_line = f"AIperture active \u2014 {', '.join(parts)}"
+
+    # Build context for Claude
+    context_parts = [
+        "AIperture permission layer is active.",
+        f"{auto_approve} auto-approve and {auto_deny} auto-deny patterns learned.",
+    ]
+    if settings.permission_learning_enabled:
+        context_parts.append(
+            "New patterns are learned from human permission decisions via hooks."
+        )
+    context_parts.append(
+        "HIGH/CRITICAL risk actions are never auto-approved."
+    )
+
+    return {
+        "systemMessage": status_line,
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": " ".join(context_parts),
+        },
+    }
 
 
 # --- Request schemas (Claude Code hook payloads) ---

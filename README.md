@@ -3,7 +3,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/aiperture)](https://pypi.org/project/aiperture/)
 [![Python 3.12+](https://img.shields.io/pypi/pyversions/aiperture)](https://pypi.org/project/aiperture/)
 [![License: Apache 2.0](https://img.shields.io/github/license/pakistan/aiperture)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-576%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-583%20passed-brightgreen)]()
 
 **The permission layer for AI agents. Zero LLM calls. Fully deterministic.**
 
@@ -104,7 +104,7 @@ curl -X POST localhost:8100/permissions/check \
 
 | Runtime | Integration | Status |
 |---|---|---|
-| **Claude Code** | Native hooks (PermissionRequest + PostToolUse) | Stable |
+| **Claude Code** | Native hooks (SessionStart + PermissionRequest + PostToolUse) | Stable |
 | **OpenAI Agents SDK** | Python middleware | Preview |
 | **Google ADK** | Python middleware | Preview |
 | **OpenClaw** | MCP server | Preview |
@@ -189,6 +189,7 @@ All settings via `AIPERTURE_*` environment variables, or run `aiperture configur
 | `GET` | `/config` | Current settings |
 | `PATCH` | `/config` | Update settings at runtime |
 | `GET` | `/metrics` | Prometheus-compatible metrics |
+| `GET` | `/hooks/session-start` | Claude Code SessionStart hook (status message) |
 | `POST` | `/hooks/permission-request` | Claude Code PermissionRequest hook |
 | `POST` | `/hooks/post-tool-use` | Claude Code PostToolUse hook |
 
@@ -199,7 +200,7 @@ All settings via `AIPERTURE_*` environment variables, or run `aiperture configur
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest tests/ -v       # 576 tests
+python -m pytest tests/ -v       # 583 tests
 ```
 
 16,000 lines of Python. ~1:1 source-to-test ratio. Requires Python 3.12+.

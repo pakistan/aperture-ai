@@ -222,6 +222,14 @@ def _write_hooks_config(settings: dict, settings_path) -> None:
     import json
 
     aiperture_hooks = {
+        "SessionStart": [{
+            "matcher": "startup",
+            "hooks": [{
+                "type": "command",
+                "command": "curl -sf http://localhost:8100/hooks/session-start 2>/dev/null || echo '{}'",
+                "timeout": 5,
+            }],
+        }],
         "PermissionRequest": [{
             "matcher": "^(?!mcp__aiperture__).*",
             "hooks": [{"type": "http", "url": "http://localhost:8100/hooks/permission-request"}],
@@ -240,7 +248,10 @@ def _write_hooks_config(settings: dict, settings_path) -> None:
         # Remove any existing AIperture hook entries first to avoid duplicates
         event_hooks = [
             entry for entry in event_hooks
-            if not any("aiperture" in h.get("url", "") for h in entry.get("hooks", []))
+            if not any(
+                "aiperture" in h.get("url", "") or "aiperture" in h.get("command", "")
+                for h in entry.get("hooks", [])
+            )
         ]
         event_hooks.extend(new_entries)
         added = True
@@ -319,12 +330,15 @@ def _remove_claude(args: list[str]):
             # Remove AIperture hook entries
             hooks = settings.get("hooks", {})
             hooks_removed = False
-            for event_name in ("PermissionRequest", "PostToolUse"):
+            for event_name in ("SessionStart", "PermissionRequest", "PostToolUse"):
                 if event_name in hooks:
                     original_len = len(hooks[event_name])
                     hooks[event_name] = [
                         entry for entry in hooks[event_name]
-                        if not any("aiperture" in h.get("url", "") for h in entry.get("hooks", []))
+                        if not any(
+                            "aiperture" in h.get("url", "") or "aiperture" in h.get("command", "")
+                            for h in entry.get("hooks", [])
+                        )
                     ]
                     if len(hooks[event_name]) < original_len:
                         hooks_removed = True

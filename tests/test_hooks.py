@@ -11,6 +11,105 @@ from aiperture.models.permission import PermissionDecision
 from aiperture.permissions.engine import PermissionEngine
 
 
+# --- SessionStart endpoint tests ---
+
+
+class TestSessionStartEndpoint:
+
+    def _client(self):
+        app = create_app()
+        return TestClient(app)
+
+    def test_session_start_returns_system_message(self):
+        """GET /hooks/session-start returns a systemMessage for the user."""
+        client = self._client()
+        resp = client.get("/hooks/session-start")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "systemMessage" in data
+        assert "AIperture active" in data["systemMessage"]
+
+    def test_session_start_returns_hook_specific_output(self):
+        """GET /hooks/session-start returns hookSpecificOutput with additionalContext."""
+        client = self._client()
+        resp = client.get("/hooks/session-start")
+        assert resp.status_code == 200
+        data = resp.json()
+        hook_output = data.get("hookSpecificOutput", {})
+        assert hook_output.get("hookEventName") == "SessionStart"
+        assert "additionalContext" in hook_output
+        assert "AIperture permission layer is active" in hook_output["additionalContext"]
+
+    def test_session_start_shows_learning_status(self):
+        """systemMessage reflects whether learning is enabled or disabled."""
+        client = self._client()
+        resp = client.get("/hooks/session-start")
+        data = resp.json()
+        msg = data["systemMessage"]
+        assert "learning enabled" in msg or "learning disabled" in msg
+
+    def test_session_start_shows_pattern_count(self):
+        """systemMessage includes learned pattern count."""
+        client = self._client()
+        resp = client.get("/hooks/session-start")
+        data = resp.json()
+        assert "learned patterns" in data["systemMessage"]
+
+    def test_session_start_includes_risk_note(self):
+        """additionalContext mentions HIGH/CRITICAL risk policy."""
+        client = self._client()
+        resp = client.get("/hooks/session-start")
+        data = resp.json()
+        context = data["hookSpecificOutput"]["additionalContext"]
+        assert "HIGH/CRITICAL" in context
+
+    def test_session_start_with_learned_patterns(self):
+        """Pattern counts reflect actual learned patterns."""
+        import aiperture.config
+
+        client = self._client()
+        engine = PermissionEngine()
+        original_min = aiperture.config.settings.permission_learning_min_decisions
+        object.__setattr__(aiperture.config.settings, "permission_learning_min_decisions", 3)
+
+        try:
+            # Seed 3 approvals for a pattern
+            for i in range(3):
+                engine.record_hook_decision(
+                    tool="filesystem", action="read", scope="docs/*.md",
+                    decision=PermissionDecision.ALLOW,
+                    session_id=f"startup-seed-{i}",
+                    organization_id="default",
+                )
+
+            resp = client.get("/hooks/session-start")
+            data = resp.json()
+            context = data["hookSpecificOutput"]["additionalContext"]
+            # Should have at least 1 auto-approve pattern
+            assert "auto-approve" in context
+        finally:
+            object.__setattr__(
+                aiperture.config.settings,
+                "permission_learning_min_decisions",
+                original_min,
+            )
+
+    def test_session_start_learning_disabled(self):
+        """When learning is disabled, systemMessage reflects that."""
+        import aiperture.config
+
+        client = self._client()
+        original = aiperture.config.settings.permission_learning_enabled
+        object.__setattr__(aiperture.config.settings, "permission_learning_enabled", False)
+
+        try:
+            resp = client.get("/hooks/session-start")
+            data = resp.json()
+            assert "learning disabled" in data["systemMessage"]
+        finally:
+            object.__setattr__(aiperture.config.settings, "permission_learning_enabled", original)
+
+
 # --- Tool mapping tests ---
 
 
