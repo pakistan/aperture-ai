@@ -214,10 +214,25 @@ def _setup_claude(args: list[str]):
         print("Tip: run 'aiperture setup-claude --bootstrap=developer' to pre-seed 75 safe patterns.")  # noqa: T201
 
 
+def _is_aiperture_hook_entry(entry: dict) -> bool:
+    """Check if a hook entry belongs to AIperture."""
+    aiperture_paths = (
+        "/hooks/permission-request",
+        "/hooks/post-tool-use",
+        "hooks/session-start",
+    )
+    for h in entry.get("hooks", []):
+        url = h.get("url", "")
+        cmd = h.get("command", "")
+        if any(p in url or p in cmd for p in aiperture_paths):
+            return True
+    return False
+
+
 def _write_hooks_config(settings: dict, settings_path) -> None:
     """Write Claude Code hook entries to settings.json.
 
-    Merges with any existing hooks — does not overwrite.
+    Idempotent — removes any existing AIperture hooks before adding fresh ones.
     """
     import json
 
@@ -226,7 +241,7 @@ def _write_hooks_config(settings: dict, settings_path) -> None:
             "matcher": "startup",
             "hooks": [{
                 "type": "command",
-                "command": "curl -sf http://localhost:8100/hooks/session-start 2>/dev/null || echo '{}'",
+                "command": "curl -sf --retry 3 --retry-delay 1 --retry-connrefused http://localhost:8100/hooks/session-start 2>/dev/null || echo '{}'",
                 "timeout": 5,
             }],
         }],
@@ -248,10 +263,7 @@ def _write_hooks_config(settings: dict, settings_path) -> None:
         # Remove any existing AIperture hook entries first to avoid duplicates
         event_hooks = [
             entry for entry in event_hooks
-            if not any(
-                "aiperture" in h.get("url", "") or "aiperture" in h.get("command", "")
-                for h in entry.get("hooks", [])
-            )
+            if not _is_aiperture_hook_entry(entry)
         ]
         event_hooks.extend(new_entries)
         added = True
@@ -335,10 +347,7 @@ def _remove_claude(args: list[str]):
                     original_len = len(hooks[event_name])
                     hooks[event_name] = [
                         entry for entry in hooks[event_name]
-                        if not any(
-                            "aiperture" in h.get("url", "") or "aiperture" in h.get("command", "")
-                            for h in entry.get("hooks", [])
-                        )
+                        if not _is_aiperture_hook_entry(entry)
                     ]
                     if len(hooks[event_name]) < original_len:
                         hooks_removed = True
